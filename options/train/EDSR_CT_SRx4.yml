@@ -12,7 +12,7 @@ datasets:
   train:
     name: ImageNet
     type: ImageNetPairedDataset
-    dataroot_gt: /data/datasets/ImageNet/data/ImageNet2012/ILSVRC2012_img_train
+    dataroot_gt: ./ImageNet/data/ImageNet2012/ILSVRC2012_img_train
     dataroot_lq: 
     filename_tmpl: '{}x4'
     io_backend:
