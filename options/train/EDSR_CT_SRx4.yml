@@ -1,0 +1,260 @@
+
+# general settings
+name: CT_naf_bicx4_mixloss_net5_block_24_pxl_sigma_1_iter_80w
+model_type: EDSRModel
+scale: 4
+num_gpu: 1
+manual_seed: 0
+find_unused_parameters: True
+
+# dataset and data loader settings
+datasets:
+  train:
+    name: ImageNet
+    type: ImageNetPairedDataset
+    dataroot_gt: /data/datasets/ImageNet/data/ImageNet2012/ILSVRC2012_img_train
+    dataroot_lq: 
+    filename_tmpl: '{}x4'
+    io_backend:
+      type: disk
+
+    gt_size: 256
+    upscale: 2
+    downscale: 1
+    upsample: false
+    use_hflip: True
+    use_rot: True
+    mean: 0.5
+    std: 0.5
+
+    # data loader
+    num_worker_per_gpu: 6
+    batch_size_per_gpu: 4
+    dataset_enlarge_ratio: 1
+    prefetch_mode: cuda
+    pin_memory: True
+    persistent_workers: True
+
+  val_1:
+    name: ImageNet
+    type: ImageNetPairedDataset
+    dataroot_gt: ./validation/ImageNet/Bicubicx4/gt
+    dataroot_lq:
+    mean: 0.5
+    std: 0.5
+    gt_size: 256
+    upscale: 4
+    downscale: 1
+    upsample: false
+    io_backend:
+      type: disk
+
+  # val_2:
+  #   name: Set14
+  #   type: PairedImageDataset
+  #   dataroot_gt: datasets/TestDataSR/HR/Set14/x2
+  #   dataroot_lq: datasets/TestDataSR/LR/LRBI/Set14/x2
+  #   io_backend:
+  #     type: disk
+
+  # val_3:
+  #   name: BSD100
+  #   type: PairedImageDataset
+  #   dataroot_gt: datasets/TestDataSR/HR/B100/x2
+  #   dataroot_lq: datasets/TestDataSR/LR/LRBI/B100/x2
+  #   io_backend:
+  #     type: disk
+  
+  # val_4:
+  #   name: Urban100
+  #   type: PairedImageDataset
+  #   dataroot_gt: datasets/TestDataSR/HR/Urban100/x2
+  #   dataroot_lq: datasets/TestDataSR/LR/LRBI/Urban100/x2
+  #   io_backend:
+  #     type: disk
+
+  # val_5:
+  #   name: Manga109
+  #   type: PairedImageDataset
+  #   dataroot_gt: datasets/TestDataSR/HR/Manga109/x2
+  #   dataroot_lq: datasets/TestDataSR/LR/LRBI/Manga109/x2
+  #   io_backend:
+  #     type: disk
+
+# network structures
+network_g:
+  type: EDSRList
+
+  network0:
+    upscale: 4
+    downscale: 1
+    in_channels: 3
+    out_channels: 3
+    gt_size: 256
+    emb_dim: 128
+    depths: [6,]
+    num_heads: [6, 6]
+    num_blocks: 24
+    channel_mult_emb: 4
+    cond_lq: True
+    time_emb: false
+    window_size: 16
+    mlp_ratio: 2
+    upsampler: 'pixelshuffle'
+    interpolation: 'nearest'
+    res: false
+    block_type: 'naf'
+
+
+  network1:
+    upscale: 8
+    downscale: 3
+    in_channels: 3
+    out_channels: 3
+    gt_size: 256
+    emb_dim: 128
+    depths: [6,]
+    num_heads: [6, 6]
+    num_blocks: 24
+    channel_mult_emb: 4
+    cond_lq: True
+    time_emb: False
+    window_size: 16
+    mlp_ratio: 2
+    upsampler: 'pixelshuffle'
+    interpolation: 'nearest'
+    res: false
+    block_type: 'naf'
+
+
+  network2:
+    upscale: 2
+    downscale: 1
+    in_channels: 3
+    out_channels: 3
+    gt_size: 256
+    emb_dim: 128
+    depths: [6,]
+    num_heads: [6, 6]
+    num_blocks: 24
+    channel_mult_emb: 4
+    cond_lq: True
+    time_emb: False
+    window_size: 16
+    mlp_ratio: 2
+    upsampler: 'pixelshuffle'
+    interpolation: 'nearest'
+    res: false
+    block_type: 'naf'
+
+  network3:
+    upscale: 8
+    downscale: 5
+    in_channels: 3
+    out_channels: 3
+    gt_size: 256
+    emb_dim: 128
+    depths: [6,]
+    num_heads: [6, 6]
+    num_blocks: 12
+    channel_mult_emb: 4
+    cond_lq: True
+    time_emb: False
+    window_size: 16
+    mlp_ratio: 2
+    upsampler: 'pixelshuffle'
+    interpolation: 'nearest'
+    res: false
+    block_type: 'naf'
+
+  network4:
+    upscale: 4
+    downscale: 3
+    in_channels: 3
+    out_channels: 3
+    gt_size: 256
+    emb_dim: 128
+    depths: [6,]
+    num_heads: [6, 6]
+    num_blocks: 8
+    channel_mult_emb: 4
+    cond_lq: True
+    time_emb: False
+    window_size: 16
+    mlp_ratio: 2
+    upsampler: 'pixelshuffle'
+    interpolation: 'nearest'
+    res: false
+    block_type: 'naf'
+    
+
+
+# path
+path:
+  pretrain_network_g: ~
+  strict_load_g: true
+  resume_state: ~
+
+# training settings
+train:
+  ema_decay: 0.999
+  optim_g:
+    type: AdamW
+    lr: !!float 1e-4
+    weight_decay: 0
+    betas: [0.9, 0.9]
+
+  scheduler:
+    type: MultiStepLR
+    milestones: [400000]
+    gamma: 0.5
+
+  total_iter: 800000
+  warmup_iter: 10000
+
+  # losses
+  pixel_opt:
+    type: CharbonnierLoss
+  consistency_opt:
+    sigma_min: 0
+    sigma_max: 1
+    rho: 1
+    up_list: [4, 8, 2, 8, 4]
+    down_list: [1, 3, 1, 5, 3]
+    type: LPIPSLoss
+
+
+# validation settings
+val:
+  val_freq: 1000
+  save_img: false
+
+  metrics:
+    psnr: # metric name, can be arbitrary
+      type: calculate_psnr
+      crop_border: 0
+      test_y_channel: yes
+    
+    ssim: # metric name, can be arbitrary
+      type: calculate_ssim
+      crop_border: 0
+      test_y_channel: yes
+
+    lpips:
+      type: calculate_lpips
+      better: lower
+
+# logging settings
+logger:
+  print_freq: 100
+  tb_freq: 500
+  save_checkpoint_freq: !!float 1e4
+  use_tb_logger: true
+  wandb:
+    project: ~
+    resume_id: ~
+
+# dist training settings
+dist_params:
+  backend: nccl
+  port: 29500
