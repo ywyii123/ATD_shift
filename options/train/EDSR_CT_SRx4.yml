@@ -1,6 +1,6 @@
 
 # general settings
-name: CT_naf_bicx4_mixloss_net5_block_24_pxl_sigma_1_iter_80w
+name: CT_afhq_repeat_naf_bicx4_l2loss_mul_step_net3_block_16_pxl_noconv_sigma_1_iter_40w
 model_type: EDSRModel
 scale: 4
 num_gpu: 1
@@ -10,9 +10,11 @@ find_unused_parameters: True
 # dataset and data loader settings
 datasets:
   train:
-    name: ImageNet
+    name: afhqv2_256
+    # name: ImageNet
     type: ImageNetPairedDataset
-    dataroot_gt: ./ImageNet/data/ImageNet2012/ILSVRC2012_img_train
+    # dataroot_gt: /data/datasets/ImageNet/data/ImageNet2012/ILSVRC2012_img_train
+    dataroot_gt: /data/datasets/afhqv2-256x256_train
     dataroot_lq: 
     filename_tmpl: '{}x4'
     io_backend:
@@ -22,8 +24,8 @@ datasets:
     upscale: 2
     downscale: 1
     upsample: false
-    use_hflip: True
-    use_rot: True
+    use_hflip: False
+    use_rot: False
     mean: 0.5
     std: 0.5
 
@@ -36,9 +38,11 @@ datasets:
     persistent_workers: True
 
   val_1:
-    name: ImageNet
+    # name: ImageNet
+    name: AFHQv2
     type: ImageNetPairedDataset
-    dataroot_gt: ./validation/ImageNet/Bicubicx4/gt
+    # dataroot_gt: ./validation/ImageNet/Bicubicx4/gt
+    dataroot_gt: ./validation/afhqv2_256/bicx4/gt
     dataroot_lq:
     mean: 0.5
     std: 0.5
@@ -87,6 +91,7 @@ network_g:
 
   network0:
     upscale: 4
+    repeat_times: 16
     downscale: 1
     in_channels: 3
     out_channels: 3
@@ -94,98 +99,130 @@ network_g:
     emb_dim: 128
     depths: [6,]
     num_heads: [6, 6]
-    num_blocks: 24
+    num_blocks: 16
     channel_mult_emb: 4
     cond_lq: True
     time_emb: false
     window_size: 16
     mlp_ratio: 2
     upsampler: 'pixelshuffle'
-    interpolation: 'nearest'
+    use_conv: False
+    interpolation: 'bilinear'
     res: false
     block_type: 'naf'
 
 
-  network1:
-    upscale: 8
-    downscale: 3
+  network3:
+    upscale: 3
+    downscale: 1
+    repeat_times: 9
     in_channels: 3
     out_channels: 3
     gt_size: 256
-    emb_dim: 128
+    emb_dim: 144
     depths: [6,]
     num_heads: [6, 6]
-    num_blocks: 24
+    num_blocks: 16
     channel_mult_emb: 4
     cond_lq: True
     time_emb: False
     window_size: 16
     mlp_ratio: 2
     upsampler: 'pixelshuffle'
-    interpolation: 'nearest'
+    use_conv: false
+    interpolation: 'bilinear'
     res: false
     block_type: 'naf'
+
+  # network1:
+  #   upscale: 8
+  #   downscale: 3
+  #   repeat_times: 1
+  #   in_channels: 3
+  #   out_channels: 3
+  #   gt_size: 256
+  #   emb_dim: 128
+  #   depths: [6,]
+  #   num_heads: [6, 6]
+  #   num_blocks: 16
+  #   channel_mult_emb: 4
+  #   cond_lq: True
+  #   time_emb: False
+  #   window_size: 16
+  #   mlp_ratio: 2
+  #   upsampler: 'pixelshuffle'
+  #   use_conv: false
+  #   interpolation: 'bilinear'
+  #   res: false
+  #   block_type: 'naf'
 
 
   network2:
     upscale: 2
     downscale: 1
+    repeat_times: 4
     in_channels: 3
     out_channels: 3
     gt_size: 256
     emb_dim: 128
     depths: [6,]
     num_heads: [6, 6]
-    num_blocks: 24
+    num_blocks: 16
     channel_mult_emb: 4
     cond_lq: True
     time_emb: False
     window_size: 16
     mlp_ratio: 2
     upsampler: 'pixelshuffle'
-    interpolation: 'nearest'
+    use_conv: false
+    interpolation: 'bilinear'
     res: false
     block_type: 'naf'
 
-  network3:
-    upscale: 8
-    downscale: 5
-    in_channels: 3
-    out_channels: 3
-    gt_size: 256
-    emb_dim: 128
-    depths: [6,]
-    num_heads: [6, 6]
-    num_blocks: 12
-    channel_mult_emb: 4
-    cond_lq: True
-    time_emb: False
-    window_size: 16
-    mlp_ratio: 2
-    upsampler: 'pixelshuffle'
-    interpolation: 'nearest'
-    res: false
-    block_type: 'naf'
+  # network3:
+  #   upscale: 8
+  #   downscale: 5
+  #   in_channels: 3
+  #   out_channels: 3
+  #   gt_size: 256
+  #   emb_dim: 128
+  #   depths: [6,]
+  #   num_heads: [6, 6]
+  #   num_blocks: 12
+  #   channel_mult_emb: 4
+  #   cond_lq: True
+  #   time_emb: False
+  #   window_size: 16
+  #   mlp_ratio: 2
+  #   upsampler: 'interpolation'
+  #   use_conv: True
+  #   interpolation: 'bilinear'
+  #   res: false
+  #   block_type: 'naf'
 
-  network4:
-    upscale: 4
-    downscale: 3
-    in_channels: 3
-    out_channels: 3
-    gt_size: 256
-    emb_dim: 128
-    depths: [6,]
-    num_heads: [6, 6]
-    num_blocks: 8
-    channel_mult_emb: 4
-    cond_lq: True
-    time_emb: False
-    window_size: 16
-    mlp_ratio: 2
-    upsampler: 'pixelshuffle'
-    interpolation: 'nearest'
-    res: false
-    block_type: 'naf'
+
+
+  # network4:
+  #   upscale: 4
+  #   downscale: 3
+  #   repeat_times: 1
+  #   in_channels: 3
+  #   out_channels: 3
+  #   gt_size: 256
+  #   emb_dim: 128
+  #   depths: [6,]
+  #   num_heads: [6, 6]
+  #   num_blocks: 8
+  #   channel_mult_emb: 4
+  #   cond_lq: True
+  #   time_emb: False
+  #   window_size: 16
+  #   mlp_ratio: 2
+  #   upsampler: 'pixelshuffle'
+  #   use_conv: false
+  #   interpolation: 'bilinear'
+  #   res: false
+  #   block_type: 'naf'
     
 
 
@@ -206,28 +243,30 @@ train:
 
   scheduler:
     type: MultiStepLR
-    milestones: [400000]
+    milestones: [200000]
     gamma: 0.5
 
-  total_iter: 800000
+  total_iter: 400000
   warmup_iter: 10000
 
   # losses
-  pixel_opt:
-    type: CharbonnierLoss
+  # pixel_opt:
+  #   type: CharbonnierLoss
   consistency_opt:
     sigma_min: 0
     sigma_max: 1
     rho: 1
-    up_list: [4, 8, 2, 8, 4]
-    down_list: [1, 3, 1, 5, 3]
-    type: LPIPSLoss
+    up_list: [4, 3, 2]
+    down_list: [1, 1, 1]
+    repeat_list: [16, 9, 4]
+    multi_step: True
+    type: MSELoss
 
 
 # validation settings
 val:
-  val_freq: 1000
-  save_img: false
+  val_freq: 2000
+  save_img: true
 
   metrics:
     psnr: # metric name, can be arbitrary
@@ -249,7 +288,7 @@ logger:
   print_freq: 100
   tb_freq: 500
   save_checkpoint_freq: !!float 1e4
-  use_tb_logger: true
+  use_tb_logger: false
   wandb:
     project: ~
     resume_id: ~

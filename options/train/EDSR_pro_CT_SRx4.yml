@@ -1,18 +1,20 @@
 
 # general settings
-name: CT_bicx4_charbonnier_shift_layer_3_depth_3_sigma_1_iter_40w
+name: CT_bicx4_charbonnierloss_imagenet_swin_16_2_nearest_upsample_shift_layer_8_depth_6_sigma_2_iter_80w
 model_type: EDSR3Model
 scale: 4
-num_gpu: 1
+num_gpu: 2
 manual_seed: 0
-# find_unused_parameters: True
+find_unused_parameters: True
 
 # dataset and data loader settings
 datasets:
   train:
     name: ImageNet
+    # name: afhqv2_256
     type: ShiftImagenetDataset
     dataroot_gt: /data/datasets/ImageNet/data/ImageNet2012/ILSVRC2012_img_train
+    # dataroot_gt: /data/datasets/afhqv2-256x256_train
     dataroot_lq: 
     filename_tmpl: '{}x4'
     io_backend:
@@ -21,6 +23,7 @@ datasets:
     gt_size: 256
     scale: 4
     upsample: True
+    upsampler: 'nearest'
     mean: 0.5
     std: 0.5
 
@@ -34,14 +37,17 @@ datasets:
 
   val_1:
     name: ImageNet
+    # name: afhqv2_256
     type: ShiftImagenetDataset
     dataroot_gt: ./validation/ImageNet/Bicubicx4/gt
-    dataroot_lq: ./validation/ImageNet/Bicubicx4/lq_opencv
+    # dataroot_gt: ./validation/afhqv2_256/bicx4/gt
+    # dataroot_lq: ./validation/ImageNet/Bicubicx4/lq_opencv
     mean: 0.5
     std: 0.5
     gt_size: 256
     scale: 4
     upsample: True
+    upsampler: 'nearest'
     io_backend:
       type: disk
 
@@ -83,9 +89,9 @@ network_g:
 
   in_chans: 3
   gt_size: 256
-  embed_dim: 96
-  depths: [3, 3, 3,]
-  num_heads: [6, 6, 6, 6, 6, 6,]
+  embed_dim: 192
+  depths: [6, 6, 6, 6, 6, 6, 6, 6]
+  num_heads: [6, 6, 6, 6, 6, 6, 6, 6]
   window_size: 16
   convffn_kernel_size: 5
   img_range: 1.
@@ -95,32 +101,33 @@ network_g:
   cond_lq: True
   dropout: 0.1
   time_emb: True
-  block_type: 'naf'
+  scale: 4
+  block_type: 'swin'
 
 
 # path
 path:
-  # pretrain_network_g: ~
-  pretrain_network_g: experiments/CT_bicx4_charbonnier_shift_layer_3_depth_3_sigma_1_iter_40w/models/net_g_190000.pth
+  pretrain_network_g: ~
+  # pretrain_network_g: experiments/CT_bicx4_l2loss_swin_multi_step_5_shift_layer_8_depth_6_sigma_1_iter_40w/models/net_g_180000.pth
   strict_load_g: true
-  resume_state: experiments/CT_bicx4_charbonnier_shift_layer_3_depth_3_sigma_1_iter_40w/training_states/190000.state
-  # resume_state: ~
+  # resume_state: experiments/CT_bicx4_l2loss_swin_multi_step_5_shift_layer_8_depth_6_sigma_1_iter_40w/training_states/180000.state
+  resume_state: ~
 
 # training settings
 train:
   ema_decay: 0.999
   optim_g:
     type: AdamW
-    lr: !!float 1e-5
+    lr: !!float 5e-5
     weight_decay: 0
     betas: [0.9, 0.9]
 
   scheduler:
     type: MultiStepLR
-    milestones: [250000]
+    milestones: [400000]
     gamma: 0.5
 
-  total_iter: 400000
+  total_iter: 600000
   warmup_iter: 10000
 
   # losses
@@ -131,19 +138,20 @@ train:
   consistency_opt:
     type: CharbonnierLoss
     sigma_min: 0
-    sigma_max: 1
+    sigma_max: 2
     rho: 1
-    s0: 4
-    s1: 32
-    constant_step: 5
+    s0: 16
+    s1: 2
+    constant_step: 0
+    multi_step: False
     p_mean: 0
-    p_std: 0
+    p_std: 1.5
     skip: true
 
 # validation settings
 val:
-  val_freq: 1000
-  save_img: false
+  val_freq: 2000
+  save_img: True
 
   metrics:
     psnr: # metric name, can be arbitrary
@@ -163,7 +171,7 @@ val:
 # logging settings
 logger:
   print_freq: 100
-  tb_freq: 500
+  tb_freq: 1000
   save_checkpoint_freq: !!float 1e4
   use_tb_logger: true
   wandb:

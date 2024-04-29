@@ -509,7 +509,8 @@ class UpsampleOneStep(nn.Sequential):
 class EDSR(nn.Module):
     def __init__(self, 
                  in_channels, 
-                 out_channels, 
+                 out_channels,
+                 repeat_times, 
                  emb_dim, 
                  num_blocks, 
                  upscale,
@@ -529,6 +530,7 @@ class EDSR(nn.Module):
                  upsampler='pixelshuffle',
                  interpolation=None,
                  block_type='edsr',
+                 use_conv=True,
                  res=False,
                  **kwargs,
                  ):
@@ -547,6 +549,7 @@ class EDSR(nn.Module):
         self.mlp_ratio = mlp_ratio
         self.upsampler = upsampler
         self.res = res
+        self.repeat_times = repeat_times
 
         num_feat = emb_dim
         if interpolation is not None:
@@ -559,9 +562,9 @@ class EDSR(nn.Module):
                 nn.SiLU(),
                 nn.Linear(time_embed_dim, time_embed_dim),
             )
-        
+        num_in_channels = in_channels * repeat_times
         if cond_lq:
-            num_in_channels = in_channels * 2
+            num_in_channels = in_channels + num_in_channels
         
         self.conv0 = nn.Conv2d(num_in_channels, emb_dim, kernel_size=3, stride=1, padding=1)
             
@@ -618,7 +621,8 @@ class EDSR(nn.Module):
         if self.upsampler == 'pixelshuffle':
             self.upsample = nn.Sequential(
                 nn.PixelShuffle(upscale),
-                nn.Conv2d(num_feat // (upscale ** 2), num_feat // (upscale ** 2), 3, 1, 1),
+                nn.Conv2d(num_feat // (upscale ** 2), num_feat // (upscale ** 2), 3, 1, 1) 
+                if use_conv else nn.Identity(),
                 )
             num_feat = num_feat // (upscale ** 2)
             if downscale != 1:
@@ -692,10 +696,12 @@ class EDSR(nn.Module):
         h, w = h_ori + h_pad, w_ori + w_pad
         x = torch.cat([x, torch.flip(x, [2])], 2)[:, :, :h, :]
         x = torch.cat([x, torch.flip(x, [3])], 3)[:, :, :, :w]
+        # x = x.repeat(1, self.repeat_times, 1, 1)
         if lq != None and self.cond_lq:
             lq = torch.cat([lq, torch.flip(lq, [2])], 2)[:, :, :h, :]
             lq = torch.cat([lq, torch.flip(lq, [3])], 3)[:, :, :, :w]
-        x = torch.cat([lq, x], dim=1)
+            x = torch.cat([lq, x], dim=1)
+        
         x_size = (h, w)
 
         if self.block_type == 'swin':
@@ -728,8 +734,10 @@ class EDSR(nn.Module):
             
         elif self.upsampler == 'interpolation':
             sf = self.upscale / self.downscale
-            out = self.lrelu(self.conv_up1(torch.nn.functional.interpolate(out, scale_factor=sf, mode=self.interpolation)))
-            out = self.conv_last(self.lrelu(self.conv_hr(out)))
+            out = self.conv_hr(self.conv_up1(torch.nn.functional.interpolate(out, scale_factor=sf, mode=self.interpolation)))
+            # out = self.lrelu(self.conv_up1(torch.nn.functional.interpolate(out, scale_factor=sf, mode=self.interpolation)))
+            # out = self.conv_last(self.lrelu(self.conv_hr(out)))
+            out = self.conv_last(out)
 
         
 
@@ -753,6 +761,7 @@ class EDSRList(nn.Module):
             net_g = EDSR(
                 in_channels=opt_net['in_channels'], 
                 out_channels=opt_net['out_channels'],
+                repeat_times=opt_net['repeat_times'],
                 num_blocks=opt_net['num_blocks'],
                 emb_dim=opt_net['emb_dim'],  
                 upscale=opt_net['upscale'],
@@ -765,6 +774,7 @@ class EDSRList(nn.Module):
                 qkv_bias=True,
                 channel_mult_emb=opt_net['channel_mult_emb'],
                 cond_lq=opt_net['cond_lq'],
+                use_conv=opt_net['use_conv'],
                 norm_layer=nn.LayerNorm,
                 patch_norm=True,
                 upsampler=opt_net['upsampler'],

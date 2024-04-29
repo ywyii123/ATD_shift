@@ -206,11 +206,12 @@ def generate_hq(lq, upscale,):
     lq = (lq + 1.0) / 2
     h_ori, w_ori = lq.shape[-2:]
     lq = lq.permute(0, 2, 3, 1).cpu().numpy()
+    # h, w = h_ori, w_ori
     h, w = math.ceil(h_ori * upscale), math.ceil(w_ori * upscale)    
     # print('gt_imgs.shape', gt_imgs.shape)
     hq_imgs = []
     for img in lq:
-        hq = cv2.resize(img, dsize=None, fx=upscale, fy=upscale, interpolation=cv2.INTER_CUBIC)
+        hq = cv2.resize(img, (h, w), interpolation=cv2.INTER_CUBIC)
         hq_imgs.append(hq)
     hq_imgs = np.array(hq_imgs)
     hq_imgs = torch.from_numpy(hq_imgs.transpose(0, 3, 1, 2))
@@ -218,4 +219,31 @@ def generate_hq(lq, upscale,):
     # print('lq_imgs.shape', lq_imgs.shape)
 
     return hq_imgs
+
+def generate_hq_pad(lq, downscale, gt_size):
+    # upscale = int(upscale)
+    lq = (lq + 1.0) / 2
+    # h_ori, w_ori = lq.shape[-2:]
+    lq = lq.permute(0, 2, 3, 1).cpu().numpy()
+    # h, w = h_ori, w_ori
+    h, w = math.ceil(gt_size / downscale), math.ceil(gt_size / downscale)    
+    # print('gt_imgs.shape', gt_imgs.shape)
+    hq_imgs = []
+
+    pad_h = int(max(h * downscale - gt_size, 0))
+    pad_w = int(max(w * downscale - gt_size, 0))
+    target_size = (gt_size, gt_size)
+    # gt = cv2.copyMakeBorder(gt, 0, pad_h, 0, pad_w, cv2.BORDER_REFLECT_101)
+    for img in lq:
+        img = cv2.resize(img, target_size, interpolation=cv2.INTER_CUBIC)
+        img = cv2.copyMakeBorder(img, 0, pad_h, 0, pad_w, cv2.BORDER_REFLECT_101)
+        img = cv2.resize(img, dsize=None, fx=1/downscale, fy=1/downscale, interpolation=cv2.INTER_CUBIC)
+        hq_imgs.append(img)
+    hq_imgs = np.array(hq_imgs)
+    hq_imgs = torch.from_numpy(hq_imgs.transpose(0, 3, 1, 2))
+    hq_imgs = hq_imgs * 2 - 1
+    # print('lq_imgs.shape', lq_imgs.shape)
+
+    return hq_imgs
+
 

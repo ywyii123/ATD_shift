@@ -72,7 +72,11 @@ class ShiftImagenetDataset(data.Dataset):
             img_gt = random_crop(img_gt, gt_size)
             img_lq = cv2.resize(img_gt, dsize=None, fx=1/scale, fy=1/scale, interpolation=cv2.INTER_CUBIC)
             if self.opt['upsample']:
-                img_lq_upsample = cv2.resize(img_lq, dsize=None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+                if self.opt['upsampler'] == 'bicubic':
+                    img_lq_upsample = cv2.resize(img_lq, dsize=None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+                elif self.opt['upsampler'] == 'nearest':
+                    img_lq_upsample = cv2.resize(img_lq, dsize=None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST)
+         
 
             # img_gt = augment([img_gt,], self.opt['use_hflip'], self.opt['use_rot'])
 
@@ -86,8 +90,11 @@ class ShiftImagenetDataset(data.Dataset):
         if self.opt['phase'] != 'train':
             img_lq = cv2.resize(img_gt, dsize=None, fx=1/scale, fy=1/scale, interpolation=cv2.INTER_CUBIC)
             if self.opt['upsample']:
-                img_lq_upsample = cv2.resize(img_lq, dsize=None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
-
+                if self.opt['upsampler'] == 'bicubic':
+                    img_lq_upsample = cv2.resize(img_lq, dsize=None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+                elif self.opt['upsampler'] == 'nearest':
+                    img_lq_upsample = cv2.resize(img_lq, dsize=None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST)
+         
             # img_gt = img_gt[0:img_lq.shape[0] * scale, 0:img_lq.shape[1] * scale, :]
 
         # BGR to RGB, HWC to CHW, numpy to tensor

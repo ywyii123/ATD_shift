@@ -719,6 +719,7 @@ class SwinLayer(nn.Module):
 
         super().__init__()
         self.dim = dim
+        self.input_resolution = img_size
         self.depth = depth
         self.use_checkpoint = use_checkpoint
         self.patch_embed = PatchEmbed(
@@ -1049,6 +1050,8 @@ class UpsampleOneStep(nn.Sequential):
         return flops
 
 
+
+
 class BasicLayer(nn.Module):
     def __init__(self, 
                  emb_dim,
@@ -1058,6 +1061,8 @@ class BasicLayer(nn.Module):
                  window_size=None,
                  block_type='naf',
                  dropout=0.1,
+                 convffn_kernel_size=5,
+                 mlp_ratio=4.
                  ):
         super(BasicLayer, self).__init__()
         self.block_type = block_type
@@ -1091,15 +1096,17 @@ class BasicLayer(nn.Module):
                     depth=depth,
                     num_heads=num_heads,
                     window_size=window_size,
+                    convffn_kernel_size=convffn_kernel_size,
+                    mlp_ratio=mlp_ratio
                 )
             )
             
-        # self.time_emb_block_1 = ResBlock(
-        #         channels=emb_dim,
-        #         emb_channels=time_embed_dim,
-        #         dropout=dropout,
-        #         out_channels=emb_dim,
-        #         use_scale_shift_norm=True,)
+        self.time_emb_block_1 = ResBlock(
+                channels=emb_dim,
+                emb_channels=time_embed_dim,
+                dropout=dropout,
+                out_channels=emb_dim,
+                use_scale_shift_norm=True,)
         
 
     def forward(self, x, emb, x_size=None, params=None):
@@ -1110,7 +1117,7 @@ class BasicLayer(nn.Module):
             else:
                 x = layer(x)
         
-        # x = self.time_emb_block_1(x, emb)
+        x = self.time_emb_block_1(x, emb)
         return x
 
 
@@ -1190,13 +1197,16 @@ class EDSR_pro(nn.Module):
                  dropout=0.1,
                  time_emb=False,
                  block_type='naf',
+                 scale=4,
                  **kwargs):
         super().__init__()
         self.cond_lq = cond_lq
-        num_in_ch = in_chans
+        num_in_ch = in_chans * (scale ** 2)
+        self.scale = scale
         if cond_lq:
-            num_in_ch = 2 * in_chans
-        num_out_ch = in_chans
+            num_in_ch = num_in_ch + in_chans
+        num_out_ch = in_chans * (scale ** 2)
+        # num_out_ch = in_chans
         num_feat = embed_dim
         self.img_range = img_range
         self.block_type = block_type
@@ -1226,6 +1236,9 @@ class EDSR_pro(nn.Module):
                 nn.Linear(time_embed_dim, time_embed_dim),
             )
         
+        self.encoder = nn.Sequential(nn.PixelUnshuffle(scale))
+        self.decoder = nn.Sequential(nn.PixelShuffle(scale))
+
         if block_type == 'swin':
 
             # split image into non-overlapping patches
@@ -1261,10 +1274,12 @@ class EDSR_pro(nn.Module):
                 layer = BasicLayer(
                     emb_dim=embed_dim,
                     depth=depths[i_layer],
-                    num_heads=num_heads,
+                    num_heads=num_heads[i_layer],
                     window_size=window_size,
                     time_embed_dim=time_embed_dim,
                     block_type=block_type,
+                    convffn_kernel_size=convffn_kernel_size,
+                    mlp_ratio=mlp_ratio,
                     dropout=dropout
                 )
                 self.layers.append(layer)
@@ -1357,7 +1372,7 @@ class EDSR_pro(nn.Module):
         h_ori, w_ori = x_size
         if self.block_type == 'swin':
             mod = self.window_size
-
+        x_ori = x
         #time_embed
         sigma = sigma.to(torch.float32).reshape(-1, 1, 1, 1)
         sigma_data = 0.5
@@ -1371,16 +1386,22 @@ class EDSR_pro(nn.Module):
             x = torch.cat([x, torch.flip(x, [2])], 2)[:, :, :h, :]
             x = torch.cat([x, torch.flip(x, [3])], 3)[:, :, :, :w]
             if lq != None and self.cond_lq:
-                lq = torch.cat([lq, torch.flip(lq, [2])], 2)[:, :, :h, :]
-                lq = torch.cat([lq, torch.flip(lq, [3])], 3)[:, :, :, :w]
+                lq = torch.cat([lq, torch.flip(lq, [2])], 2)[:, :, :h // self.scale, :]
+                lq = torch.cat([lq, torch.flip(lq, [3])], 3)[:, :, :, :w // self.scale]
+                # x = torch.cat([lq, x], dim=1)
+            x = self.encoder(x)
+            if lq is not None and self.cond_lq:
                 x = torch.cat([lq, x], dim=1)
+            (h, w) = x.shape[2:]
             x_size = (h, w)
             attn_mask = self.calculate_mask([h, w]).to(x.device)
             params = {'attn_mask': attn_mask, 'rpi_sa': self.relative_position_index_SA}
-        if self.cond_lq:
-            x_first = torch.cat([lq, x], dim=1)
+        else:
+            x = self.encoder(x)
+            if lq is not None and self.cond_lq:
+                x = torch.cat([lq, x], dim=1)
         
-        x_first = self.conv_first(x_first)
+        x_first = self.conv_first(x)
         x_next = x_first
 
         if self.block_type == 'swin':
@@ -1394,10 +1415,11 @@ class EDSR_pro(nn.Module):
         # c_skip = self.sigma_data ** 2 / ((sigma - self.sigma_min) ** 2 + self.sigma_data ** 2)
         c_out = (sigma / 0.1) * sigma_data / ((sigma / 0.1) ** 2 + sigma_data ** 2).sqrt()
         # c_out = (sigma - self.sigma_min) * self.sigma_data / (sigma ** 2 + self.sigma_data ** 2).sqrt()
-        # out = c_skip * x + c_out * out.to(torch.float32)
         x_next = self.conv_last(x_next)
-        x_next = c_skip * x + c_out * x_next
-        return x_next
+        out = self.decoder(x_next)
+        out = c_skip * x_ori + c_out * out.to(torch.float32)
+
+        return out
 
 
 

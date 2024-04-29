@@ -3,6 +3,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 import lpips
+import torchvision.transforms as transforms
 
 from basicsr.metrics.metric_util import reorder_image, to_y_channel
 from basicsr.utils.color_util import rgb2ycbcr_pt
@@ -233,7 +234,8 @@ def _ssim_pth(img, img2):
 
 @METRIC_REGISTRY.register()
 def calculate_lpips(img, img2, loss, **kwargs):
-    img = torch.from_numpy(img).unsqueeze(0).to(torch.float32).permute(0, 3, 1, 2).to()
-    img2 = torch.from_numpy(img2).unsqueeze(0).to(torch.float32).permute(0, 3, 1, 2).to()
+    trans = transforms.ToTensor()
+    img = trans(img).cpu()
+    img2 = trans(img2).cpu()
     lpips_value = loss.forward(img, img2).mean().item()
     return lpips_value

@@ -1,7 +1,8 @@
 import math
+from xml.sax.xmlreader import InputSource
 import torch
 from torch import Tensor
-from basicsr.utils.img_util import generate_lq
+from basicsr.utils.img_util import generate_hq, generate_lq
 
 
 def improved_timesteps_schedule(
@@ -36,12 +37,12 @@ def improved_timesteps_schedule(
     if constant_steps == 0:
         total_training_steps_prime = math.floor(
             total_training_steps
-            / (math.log2(math.floor(final_timesteps / initial_timesteps)) + 1)
+            / (math.log2(math.floor(initial_timesteps / final_timesteps)) + 1)
         )
-        num_timesteps = initial_timesteps * math.pow(
+        num_timesteps = initial_timesteps // math.pow(
             2, math.floor(current_training_step / total_training_steps_prime)
         )
-        num_timesteps = min(num_timesteps, final_timesteps) + 1
+        num_timesteps = max(num_timesteps, final_timesteps) + 1
     else:
         num_timesteps = constant_steps + 1
 
@@ -195,20 +196,95 @@ def q_sample(
 def skip_schedule(cur_iter, total_iter, num_timesteps):
     return math.ceil(cur_iter / total_iter * (num_timesteps))
 
-def p_sample_loop(x_T, lq, model, num_steps, sigmas, up_list, down_list, gt_size=None):
+def p_sample_upsample_loop(lq, model, num_steps, sigmas, up_list, down_list, repeat_list, gt_size=None):
+    device = lq.device
+    down_scale_ori = up_list[0] // down_list[0]
+    input = lq.repeat(1, repeat_list[0], 1, 1)
+    x_T = input + torch.randn_like(input, device=device) * sigmas[0]
+    
     x_cur = x_T
-    device = x_T.device
-    # print(sigmas)
-    for timestep in range(2):
+    lq_ori = lq
+    lq_cond = lq
+
+    for timestep in range(num_steps):
         sigma = sigmas[timestep].to(device)
         if timestep != 0:
             up_scale = up_list[timestep]
             down_scale = down_list[timestep]
             scale = up_scale / down_scale
+            lq_cond = generate_hq(lq_ori, down_scale_ori / scale).to(device)
             lq = generate_lq(x_cur, scale).to(device)
-            noise = torch.randn_like(lq).to(device)
-            x_cur = lq + sigma * noise
-        x_next = model(x_cur, timestep, lq=lq, gt_size=gt_size).to(device)
+            input = lq.repeat(1, repeat_list[timestep], 1, 1)
+            noise = torch.randn_like(input).to(device)
+            x_cur = input + sigma * noise
+        x_next = model(x_cur, timestep, lq=lq_cond, gt_size=gt_size).to(device)
+        x_cur = x_next
+    return x_cur
+
+def p_sample_loop(lq, lq_cond, model, num_steps, sigmas, gt_size=None):
+    device = lq.device
+    
+    x_T = lq + torch.randn_like(lq, device=device) * sigmas[0]
+    x_cur = x_T
+    # print(sigmas)
+    for timestep in range(num_steps):
+        sigma = sigmas[timestep].to(device)
+        next_sigma = sigmas[timestep + 1].to(device)
+        denoised = model(x_cur, sigma, lq=lq_cond,).to(device)
+        x_next = x_cur + (next_sigma - sigma) * (x_cur - denoised) / sigma
         x_cur = x_next
     return x_cur
         
+def p_sample_upsample_loop_one_backbone(lq, model, num_steps, sigmas, up_list, down_list, repeat_list, gt_size=None):
+    device = lq.device
+    down_scale_ori = up_list[0] // down_list[0]
+    input = lq.repeat(1, repeat_list[0], 1, 1)
+    x_T = input + torch.randn_like(input, device=device) * sigmas[0]
+    
+    x_cur = x_T
+    lq_ori = lq
+    lq_cond = lq
+
+    for timestep in range(num_steps):
+        sigma = sigmas[timestep].to(device)
+        if timestep != 0:
+            up_scale = up_list[timestep]
+            down_scale = down_list[timestep]
+            scale = up_scale / down_scale
+            lq_cond = generate_hq(lq_ori, down_scale_ori / scale).to(device)
+            lq = generate_lq(x_cur, scale).to(device)
+            input = lq.repeat(1, repeat_list[timestep], 1, 1)
+            noise = torch.randn_like(input).to(device)
+            x_cur = input + sigma * noise
+        x_next = model(x_cur, timestep, sigma, lq=lq_cond, gt_size=gt_size).to(device)
+        x_cur = x_next
+    return x_cur
+
+
+def p_sample_ms(lq, model, num_steps, sigmas, up_list, down_list, gt_size=None):
+    device = lq.device
+    down_scale_ori = up_list[0] // down_list[0]
+    # x_T = input + torch.randn_like(input, device=device) * sigmas[0]
+    
+    # x_cur = x_T
+    lq_ori = lq
+    # lq_cond = lq
+    lq_cond = generate_hq(lq_ori, down_scale_ori).to(device)
+
+    for timestep in range(num_steps):
+        sigma = sigmas[timestep].to(device)
+        up_scale = up_list[timestep]
+        down_scale = down_list[timestep]
+        scale = up_scale / down_scale
+        # cond_scale = down_scale_ori / scale
+        # if cond_scale == 1:
+        #     lq_cond = lq_ori
+        # else:
+        #     lq_cond = generate_hq(lq_ori, cond_scale).to(device)
+        if timestep != 0:
+            lq = generate_lq(x_cur, scale).to(device)
+        input = generate_hq(lq, scale).to(device)
+        input = input + torch.randn_like(input) * sigma
+        x_next = model(input, timestep, sigma, lq=lq_cond, gt_size=gt_size).to(device)
+        x_cur = x_next
+    return x_cur

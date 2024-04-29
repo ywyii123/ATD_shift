@@ -1,0 +1,187 @@
+# general settings
+name: CT_bicx4_afhq_multi_scale_mul_step_5_l2loss_one_backbone_swin_layer_10_depth_2_sigma_1_pxl_iter_40w
+model_type: MSModel
+scale: 4
+num_gpu: 2
+manual_seed: 0
+find_unused_parameters: True
+
+# dataset and data loader settings
+datasets:
+  train:
+    name: afhqv2_256
+    # name: ImageNet
+    type: ImageNetPairedDataset
+    # dataroot_gt: /data/datasets/ImageNet/data/ImageNet2012/ILSVRC2012_img_train
+    dataroot_gt: /data/datasets/afhqv2-256x256_train
+    dataroot_lq: 
+    filename_tmpl: '{}x4'
+    io_backend:
+      type: disk
+
+    gt_size: 256
+    upscale: 4
+    downscale: 1
+    upsample: False
+    use_hflip: false
+    use_rot: False
+    mean: 0.5
+    std: 0.5
+
+    # data loader
+    num_worker_per_gpu: 6
+    batch_size_per_gpu: 1
+    dataset_enlarge_ratio: 1
+    prefetch_mode: cuda
+    pin_memory: True
+    persistent_workers: True
+
+  val_1:
+    # name: ImageNet
+    name: AFHQv2
+    type: ImageNetPairedDataset
+    # dataroot_gt: ./validation/ImageNet/Bicubicx4/gt
+    dataroot_gt: ./validation/afhqv2_256/bicx4/gt
+    dataroot_lq: 
+    mean: 0.5
+    std: 0.5
+    gt_size: 256
+    upscale: 4
+    downscale: 1
+    upsample: false
+    io_backend:
+      type: disk
+
+  # val_2:
+  #   name: Set14
+  #   type: PairedImageDataset
+  #   dataroot_gt: datasets/TestDataSR/HR/Set14/x2
+  #   dataroot_lq: datasets/TestDataSR/LR/LRBI/Set14/x2
+  #   io_backend:
+  #     type: disk
+
+  # val_3:
+  #   name: BSD100
+  #   type: PairedImageDataset
+  #   dataroot_gt: datasets/TestDataSR/HR/B100/x2
+  #   dataroot_lq: datasets/TestDataSR/LR/LRBI/B100/x2
+  #   io_backend:
+  #     type: disk
+  
+  # val_4:
+  #   name: Urban100
+  #   type: PairedImageDataset
+  #   dataroot_gt: datasets/TestDataSR/HR/Urban100/x2
+  #   dataroot_lq: datasets/TestDataSR/LR/LRBI/Urban100/x2
+  #   io_backend:
+  #     type: disk
+
+  # val_5:
+  #   name: Manga109
+  #   type: PairedImageDataset
+  #   dataroot_gt: datasets/TestDataSR/HR/Manga109/x2
+  #   dataroot_lq: datasets/TestDataSR/LR/LRBI/Manga109/x2
+  #   io_backend:
+  #     type: disk
+
+# network structures
+network_g:
+  type: MS
+
+  in_chans: 3
+  gt_size: 256
+  embed_dim: 192
+  depths: [2, 2, 2, 2, 2, 2, 2, 2, 2, 2]
+  num_heads: [6, 6, 6, 6, 6, 6, 6, 6, 6, 6]
+  window_size: 16
+  convffn_kernel_size: 5
+  img_range: 1.
+  mlp_ratio: 2
+  upsampler: 'pixelshuffle'
+  interpolation: 'nearest'
+  use_checkpoint: False
+  channel_mult_emb: 4
+  cond_lq: True
+  dropout: 0.1
+  time_emb: True
+  block_type: 'swin'
+  up_list: [4, 8, 2, 8, 4]
+  down_list: [1, 3, 1, 5, 3]
+
+
+# path
+path:
+  pretrain_network_g: ~
+  # pretrain_network_g: experiments/CT_bicx4_charbonnier_one_backbone_8_block_sigma_1_iter_40w_interpolation_nearest_prog/models/net_g_280000.pth
+  strict_load_g: true
+  # resume_state: experiments/CT_bicx4_charbonnier_one_backbone_8_block_sigma_1_iter_40w_interpolation_nearest_prog/training_states/280000.state
+  resume_state: ~
+
+# training settings
+train:
+  ema_decay: 0.999
+  optim_g:
+    type: AdamW
+    lr: !!float 1e-4
+    weight_decay: 0
+    betas: [0.9, 0.9]
+
+  scheduler:
+    type: MultiStepLR
+    milestones: [250000]
+    gamma: 0.5
+
+  total_iter: 400000
+  warmup_iter: 10000
+
+  # losses
+  # pixel_opt:
+  #   type: L1Loss
+  #   loss_weight: 1.0
+  #   reduction: mean
+  consistency_opt:
+    type: MSELoss
+    up_list: [4, 8, 2, 8, 4]
+    down_list: [1, 3, 1, 5, 3]
+    sigma_min: 0
+    sigma_max: 1
+    rho: 1
+    skip: True
+    multi_step: True
+
+
+# validation settings
+val:
+  val_freq: 2000
+
+  save_img: true
+
+  metrics:
+    psnr: # metric name, can be arbitrary
+      type: calculate_psnr
+      crop_border: 0
+      test_y_channel: yes
+    
+    ssim: # metric name, can be arbitrary
+      type: calculate_ssim
+      crop_border: 0
+      test_y_channel: yes
+
+    lpips:
+      type: calculate_lpips
+      better: lower
+
+# logging settings
+logger:
+  print_freq: 100
+  tb_freq: 500
+  save_checkpoint_freq: !!float 1e4
+  use_tb_logger: False
+  wandb:
+    project: ~
+    resume_id: ~
+
+# dist training settings
+dist_params:
+  backend: nccl
+  port: 29500

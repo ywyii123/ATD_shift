@@ -136,53 +136,79 @@ class SR2Model(BaseModel):
         # consistency loss
         if self.cri_consistency:
             consistency_opt = self.opt['train']['consistency_opt']
+            multi_step = consistency_opt.get('multi_step', False)
             skip = consistency_opt.get('skip', True)
             total_iter = self.opt['train']['total_iter']
             up_list = consistency_opt['up_list']
             down_list = consistency_opt['down_list']
-            down_scale_ori = up_list[0]
+            repeat_list = consistency_opt['repeat_list']
+            down_scale_ori = up_list[0] // down_list[0]
             num_steps = self.num_nets
             sigma_min = consistency_opt['sigma_min']
             sigma_max = consistency_opt['sigma_max']
             rho = consistency_opt['rho']
-
-            if skip:
-                skip_steps = skip_schedule(current_iter, total_iter, num_steps)
-            else:
-                skip_steps = 1
-            # skip_steps = skip_schedule(current_iter, self.opt['train']['total_iter'], self.num_nets)
-            # noise = torch.randn_like(self.gt)
-            timestep = torch.randint(0, num_steps - skip_steps + 1, size=(1,))
-            cur_upscale = up_list[timestep]
-            cur_downscale = down_list[timestep]
-            cur_scale = cur_upscale / cur_downscale
             sigmas = karras_schedule(num_steps + 1, sigma_min, sigma_max, rho, device=self.device)
             sigmas = sigmas.flip(dims=(0,))
-            index = timestep.repeat(self.gt.shape[0])
-            cur_sigma = sigmas[index].reshape(-1, 1, 1, 1,)
-
-            lq_ori = generate_lq(self.gt, down_scale_ori).to(self.device)
-            upscale_lq_cur = down_scale_ori / cur_scale
-            lq_cond_cur = generate_hq(lq_ori, upscale_lq_cur)
-            lq_cur = generate_lq(self.gt, cur_scale).to(self.device)
-            x_cur = lq_cur + torch.randn_like(lq_cur) * cur_sigma
-            distiller = self.net_g(x_cur, timestep, lq_cond_cur, gt_size=gt_size)
-            if timestep + skip_steps > num_steps - 1:
-                x_next = self.gt
-                distiller_target = self.gt
-            else:
-                next_sigma = sigmas[index + skip_steps].reshape(self.gt.shape[0], 1, 1, 1)
+            if multi_step == False:
+                if skip:
+                    skip_steps = skip_schedule(current_iter, total_iter, num_steps)
+                else:
+                    skip_steps = 1
+                # skip_steps = skip_schedule(current_iter, self.opt['train']['total_iter'], self.num_nets)
+                # noise = torch.randn_like(self.gt)
+                timestep = torch.randint(0, num_steps - skip_steps + 1, size=(1,))
+                cur_upscale = up_list[timestep]
+                cur_downscale = down_list[timestep]
+                cur_scale = cur_upscale / cur_downscale
                 
+                index = timestep.repeat(self.gt.shape[0])
+                cur_sigma = sigmas[index].reshape(-1, 1, 1, 1,)
+
+                lq_ori = generate_lq(self.gt, down_scale_ori).to(self.device)
+                upscale_lq_cur = down_scale_ori / cur_scale
                 lq_cond_cur = generate_hq(lq_ori, upscale_lq_cur)
-                next_upscale = up_list[timestep + skip_steps]
-                next_downscale = down_list[timestep + skip_steps]
-                next_scale = next_upscale / next_downscale
-                upscale_lq_next = down_scale_ori / next_scale
-                lq_cond_next = generate_hq(lq_ori, upscale_lq_next)
-                lq_next = generate_lq(self.gt, next_scale).to(self.device)
-                x_next = lq_next + torch.randn_like(lq_next) * next_sigma
-                with torch.no_grad():
-                    distiller_target = self.net_g(x_next, timestep + skip_steps, lq_cond_next, gt_size=gt_size).detach()
+                lq_cur = generate_lq(self.gt, cur_scale).to(self.device)
+                x_cur = lq_cur + torch.randn_like(lq_cur) * cur_sigma
+                distiller = self.net_g(x_cur, timestep, lq_cond_cur, gt_size=gt_size)
+                if timestep + skip_steps > num_steps - 1:
+                    x_next = self.gt
+                    distiller_target = self.gt
+                    lq_cond_next = self.gt
+                else:
+                    next_sigma = sigmas[index + skip_steps].reshape(self.gt.shape[0], 1, 1, 1)
+
+                    lq_cond_cur = generate_hq(lq_ori, upscale_lq_cur)
+                    next_upscale = up_list[timestep + skip_steps]
+                    next_downscale = down_list[timestep + skip_steps]
+                    next_scale = next_upscale / next_downscale
+                    upscale_lq_next = down_scale_ori / next_scale
+                    lq_cond_next = generate_hq(lq_ori, upscale_lq_next)
+                    lq_next = generate_lq(self.gt, next_scale).to(self.device)
+                    x_next = lq_next + torch.randn_like(lq_next) * next_sigma
+                    with torch.no_grad():
+                        distiller_target = self.net_g(x_next, timestep + skip_steps, lq_cond_next, gt_size=gt_size).detach()
+            else:
+                timestep = torch.randint(0, num_steps, size=(1,))
+                cur_upscale = up_list[timestep]
+                cur_downscale = down_list[timestep]
+                cur_scale = cur_upscale / cur_downscale
+                index = timestep.repeat(self.gt.shape[0])
+                cur_sigma = sigmas[index].reshape(-1, 1, 1, 1,)
+                lq_ori = generate_lq(self.gt, down_scale_ori).to(self.device)
+                upscale_lq_cur = down_scale_ori / cur_scale
+                lq_cond_cur = generate_hq(lq_ori, upscale_lq_cur)
+                lq_cur = generate_lq(self.gt, cur_scale).to(self.device)
+                repeat_times = repeat_list[timestep]
+                if repeat_times == 1:
+                    x_cur = lq_cur + torch.randn_like(lq_cur) * cur_sigma
+                else:
+                    x_cur = lq_cur.repeat(1, repeat_times, 1, 1)
+                    x_cur = x_cur + torch.randn_like(x_cur) * cur_sigma
+                distiller = self.net_g(x_cur, timestep, lq_cond_cur, gt_size=gt_size)
+                distiller_target = self.gt
+                x_next = self.gt
+                lq_cond_next = self.gt
+
 
             l_consistency = self.cri_consistency(distiller, distiller_target)
             loss_dict['l_consistency'] = l_consistency
@@ -193,7 +219,7 @@ class SR2Model(BaseModel):
                 loss_dict['l_pix'] = l_pix
 
 
-            if dist.get_rank() == 0 and current_iter % log_iter == 0:
+            if dist.get_rank() == 0 and current_iter % log_iter == 0 and tb_logger is not None:
                 # lq_tensor = ((self.lq + 1.0) / 2).clamp(0, 1)
                 gt_tensor = ((self.gt + 1.0) / 2).clamp(0, 1)
                 x_cur_tensor = ((x_cur + 1.0) / 2).clamp(0, 1)
@@ -375,9 +401,12 @@ class SR2Model(BaseModel):
 
     def get_current_visuals(self):
         out_dict = OrderedDict()
+        self.lq = self.totensor(self.lq)
         out_dict['lq'] = self.lq.detach().cpu()
+        self.output = self.totensor(self.output)
         out_dict['result'] = self.output.detach().cpu()
         if hasattr(self, 'gt'):
+            self.gt = self.totensor(self.gt)
             out_dict['gt'] = self.gt.detach().cpu()
         return out_dict
 
@@ -387,3 +416,9 @@ class SR2Model(BaseModel):
         else:
             self.save_network(self.net_g, 'net_g', current_iter)
         self.save_training_state(epoch, current_iter) 
+
+
+    def totensor(self, input):
+        input = (input + 1) / 2
+        input = input.clamp(0, 1)
+        return input

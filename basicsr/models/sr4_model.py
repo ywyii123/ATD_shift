@@ -1,4 +1,5 @@
 import copy
+import numpy
 import torch
 from collections import OrderedDict
 from os import path as osp
@@ -136,6 +137,7 @@ class SR4Model(BaseModel):
         # consistency loss
         if self.cri_consistency:
             consistency_opt = self.opt['train']['consistency_opt']
+            multi_step = consistency_opt.get('multi_step', False)
             skip = consistency_opt.get('skip', False)
             sigma_min = consistency_opt.get('sigma_min', 0)
             sigma_max = consistency_opt.get('sigma_max', 2)
@@ -149,17 +151,12 @@ class SR4Model(BaseModel):
             num_steps = improved_timesteps_schedule(current_iter, total_iter, initial_timesteps=s0,
                                                     final_timesteps=s1, constant_steps=constant_steps)
             num_steps = int(num_steps)
-            sigmas = karras_schedule(num_steps + 1, sigma_min, sigma_max, rho, device=self.device)
+            sigmas = karras_schedule(num_steps, sigma_min, sigma_max, rho, device=self.device)
             sigmas = sigmas.flip(dims=(0,))
             # print(sigmas)
-            if skip:
-                skip_steps = skip_schedule(current_iter, total_iter, num_steps)
-            else:
-                skip_steps = 1
             
-
             if p_mean == 0 and p_std == 0:
-                timestep = torch.randint(0, num_steps, size=(1,), device=self.device)
+                timestep = torch.randint(0, num_steps - 1, size=(1,), device=self.device)
                 index = timestep.repeat(self.gt.shape[0])
             else:
                 timestep = lognormal_timestep_distribution(1, sigmas, p_mean, p_std)
@@ -168,18 +165,20 @@ class SR4Model(BaseModel):
             noise = torch.randn_like(self.gt)
             cur_sigma = sigmas[index].reshape(-1, 1, 1, 1)
             x_cur = q_sample(self.gt, self.lq_upsample, sigmas, index, noise)
-            distiller = self.net_g(x_cur, cur_sigma, lq=self.lq_upsample)
+            
             # print(sigmas)
             # print(timestep)
-            if timestep + skip_steps >= num_steps:
+            if multi_step == False:
+                next_sigma = sigmas[index + 1].reshape(self.gt.shape[0], 1, 1, 1)
+                # print(next_sigma)
+                x_next = q_sample(self.gt, self.lq_upsample, sigmas, index + 1, noise)
+                with torch.no_grad():
+                    distiller_target = self.net_g(x_next, next_sigma, lq=self.lq).detach()
+            else:
                 x_next = self.gt
                 distiller_target = self.gt
-            else:
-                next_sigma = sigmas[index + skip_steps].reshape(self.gt.shape[0], 1, 1, 1)
-                # print(next_sigma)
-                x_next = q_sample(self.gt, self.lq_upsample, sigmas, index + skip_steps, noise)
-                with torch.no_grad():
-                    distiller_target = self.net_g(x_next, next_sigma, lq=self.lq_upsample)
+
+            distiller = self.net_g(x_cur, cur_sigma, lq=self.lq)
 
             l_consistency = self.cri_consistency(distiller, distiller_target)
 
@@ -298,7 +297,10 @@ class SR4Model(BaseModel):
             self.test(gt_size=gt_size)
 
             visuals = self.get_current_visuals()
+            # print(torch.max(visuals['result']).item())
             sr_img = tensor2img([visuals['result']])
+            # print(torch.max(visuals['result']).item())
+
             metric_data['img'] = sr_img
             if 'gt' in visuals:
                 gt_img = tensor2img([visuals['gt']])
@@ -362,9 +364,12 @@ class SR4Model(BaseModel):
 
     def get_current_visuals(self):
         out_dict = OrderedDict()
+        self.lq = self.totensor(self.lq)
         out_dict['lq'] = self.lq.detach().cpu()
+        self.output = self.totensor(self.output)
         out_dict['result'] = self.output.detach().cpu()
         if hasattr(self, 'gt'):
+            self.gt = self.totensor(self.gt)
             out_dict['gt'] = self.gt.detach().cpu()
         return out_dict
 
@@ -374,3 +379,8 @@ class SR4Model(BaseModel):
         else:
             self.save_network(self.net_g, 'net_g', current_iter)
         self.save_training_state(epoch, current_iter)
+
+    def totensor(self, input):
+        input = (input + 1) / 2
+        input = input.clamp(0, 1)
+        return input

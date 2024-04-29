@@ -8,7 +8,7 @@ from .misc import check_resume, get_time_str, make_exp_dirs, mkdir_and_rename, s
     scandir_SIDD
 from .options import yaml_load
 from .diffusion import improved_timesteps_schedule, karras_schedule, lognormal_timestep_distribution, improved_loss_weighting, pseudo_huber_loss, q_sample, skip_schedule
-
+from .util_image import batch_SSIM, batch_PSNR
 __all__ = [
     #  color_util.py
     'bgr2ycbcr',
@@ -56,4 +56,7 @@ __all__ = [
     'pseudo_huber_loss',
     'q_sample',
     'skip_schedule',
+    # util_image.py
+    'batch_PSNR',
+    'batch_SSIM',
 ]

@@ -1,3 +1,5 @@
+import cv2
+import numpy as np
 import torch
 import os
 import os.path as osp
@@ -8,6 +10,7 @@ from PIL import Image
 from torchvision import transforms
 from basicsr.archs.atd_pro_arch import ATD_pro
 from basicsr.archs.edsr_arch import EDSRList
+from basicsr.archs.edsr_pro_arch import EDSR_pro
 from basicsr.utils.diffusion import karras_schedule, p_sample_loop
 from basicsr.utils.options import yaml_load
 
@@ -44,17 +47,31 @@ def get_parser(**parser_kwargs):
 
 def process_image(image_input_path, image_output_path, model, sigmas, uplist, downlist, gt_size, device):
     with torch.no_grad():
-        image_input = Image.open(image_input_path).convert('RGB')
-        image_input = transforms.ToTensor()(image_input).unsqueeze(0).to(device)
-        image_input = image_input * 2.0 - 1.0
+        img_gt = cv2.imread(image_input_path, cv2.IMREAD_COLOR).astype(np.float32) / 255.
+        img_gt_tensor = np.transpose(img_gt[:, :, [2, 1, 0]], (2, 0, 1))
+        img_gt_tensor = torch.from_numpy(img_gt_tensor).to(device).unsqueeze(0).to(torch.float32)
+        target_size = (64, 64)
+        img_lr = cv2.resize(img_gt, target_size, interpolation=cv2.INTER_CUBIC)
+        lq_ori = np.transpose(img_lr[:, :, [2, 1, 0]], (2, 0, 1))
+        lq_ori = torch.from_numpy(lq_ori).to(device).unsqueeze(0).to(torch.float32).to(device)
+        target_size = (256, 256)
+        img_lr = cv2.resize(img_lr, target_size, interpolation=cv2.INTER_CUBIC)
+        img_lr = np.transpose(img_lr[:, :, [2, 1, 0]], (2, 0, 1))
+        img_lr = torch.from_numpy(img_lr).to(device).unsqueeze(0).to(torch.float32).to(device)
+        # image_input = Image.open(image_input_path).convert('RGB')
+        # image_input = transforms.ToTensor()(image_input).unsqueeze(0).to(device)
+        lq_ori = lq_ori * 2.0 - 1.0
+        img_lr = img_lr * 2.0 - 1.0
+        # image_input = image_input * 2.0 - 1.0
+        image_input = img_lr
         num_steps = len(sigmas) - 1
-        lq_ori = image_input
-        noise = torch.randn_like(image_input).to(device)
-        sigma_max = sigmas[0]
-        image_input = image_input + noise * sigma_max
+        # lq_ori = image_input
+        # noise = torch.randn_like(image_input).to(device)
+        # sigma_max = sigmas[0]
+        # image_input = image_input + noise * sigma_max
         # print(image_input.device)
         # print(lq_ori.device)
-        image_output = p_sample_loop(image_input, lq_ori, model, num_steps, sigmas, uplist, downlist, gt_size)
+        image_output = p_sample_loop(image_input, lq_ori, model, num_steps, sigmas,)
         image_output = (image_output + 1) / 2
         image_output = image_output.clamp(0.0, 1.0)[0].cpu()
         # image_output = model(image_input).clamp(0.0, 1.0)[0].cpu()
@@ -69,9 +86,10 @@ def main():
     sigma_min = args.sigma_min
     rho = args.rho
     num_steps = args.num_steps
-    opt = yaml_load(args.opt)
-    opt_net = opt['network_g']
-    opt_net.pop('type')
+    if args.opt:
+        opt = yaml_load(args.opt)
+        opt_net = opt['network_g']
+        opt_net.pop('type')
     sigmas = karras_schedule(num_steps + 1, sigma_min, sigma_max, rho, device)
     sigmas = sigmas.flip(dims=(0,))
 
@@ -94,10 +112,28 @@ def main():
     #             res=True
     #            )  
     
-    model = EDSRList(**opt_net)
+    # model = EDSRList(**opt_net)
+
+    model = EDSR_pro(
+        in_chans=3,
+        gt_size=256,
+        embed_dim=96,
+        depths=[6, 6, 6, 6, 6, 6, 6, 6],
+        num_heads=[6, 6, 6, 6, 6, 6, 6, 6],
+        window_size=16,
+        convffn_kernel_size=5,
+        img_range=1.,
+        mlp_ratio=2,
+        use_checkpoint=False,
+        channel_mult_emb=4,
+        cond_lq=True,
+        dropout=0.1,
+        time_emb=True,
+        block_type='swin',
+  )
 
 
-    print(model)
+    # print(model)
     state_dict = torch.load(model_path, map_location=device)['params_ema']
     # print(state_dict.keys())
     model.load_state_dict(state_dict, strict=True)

@@ -634,17 +634,19 @@ class UpAndDownBeforeOut(nn.Module):
                 nn.Conv2d(num_feat, num_feat * (upscale ** 2), 3, 1, 1),
                 nn.PixelShuffle(upscale),
             )
+            num_feat = num_feat
             
             if downscale != 1:
                 # self.conv_before_downsample = nn.Conv2d(num_feat, num_feat, 3, 1, 1)
-                self.conv_last = nn.Conv2d(num_feat, outchns, kernel_size=downscale, stride=downscale, padding=0)
+                # self.conv_last = nn.Conv2d(num_feat, outchns, kernel_size=downscale, stride=downscale, padding=0)
                 self.downsample = nn.Sequential(
-                    nn.Identity()
+                    # nn.Identity()
                     # nn.Conv2d(num_feat, num_feat, 3, 1, 1),
                     # nn.Conv2d(num_feat, num_feat, kernel_size=downscale, stride=downscale, padding=0),
-                    # nn.PixelUnshuffle(downscale),
+                    nn.PixelUnshuffle(downscale),
                     # nn.Conv2d(num_feat * (downscale ** 2), num_feat, 3, 1, 1)
                 )
+            num_feat = num_feat * (downscale ** 2)
 
         elif upsampler == 'interpolation':
             scale = upscale / downscale
@@ -687,10 +689,15 @@ class BasicLayer(nn.Module):
                  emb_dim,
                  depth,
                  time_embed_dim,
+                 num_heads=None,
+                 window_size=None,
                  block_type='naf',
                  dropout=0.1,
+                 convffn_kernel_size=5,
+                 mlp_ratio=4.
                  ):
         super(BasicLayer, self).__init__()
+        self.block_type = block_type
         self.layers = nn.ModuleList([])
         self.time_emb_block_0 = ResBlock(
                 channels=emb_dim,
@@ -713,20 +720,131 @@ class BasicLayer(nn.Module):
                         out_channels=emb_dim,
                     )
                 )
-        self.time_emb_block_1 = ResBlock(
-                channels=emb_dim,
-                emb_channels=time_embed_dim,
-                dropout=dropout,
-                out_channels=emb_dim,
-                use_scale_shift_norm=True,)
+        
+        if block_type == 'swin':
+            self.layers.append(
+                SwinLayer(
+                    dim=emb_dim,
+                    depth=depth,
+                    num_heads=num_heads,
+                    window_size=window_size,
+                    convffn_kernel_size=convffn_kernel_size,
+                    mlp_ratio=mlp_ratio
+                )
+            )
+            
+        # self.time_emb_block_1 = ResBlock(
+        #         channels=emb_dim,
+        #         emb_channels=time_embed_dim,
+        #         dropout=dropout,
+        #         out_channels=emb_dim,
+        #         use_scale_shift_norm=True,)
         
 
-    def forward(self, x, emb):
+    def forward(self, x, emb, x_size=None, params=None):
         x = self.time_emb_block_0(x, emb)
-        for layer in self.layers:
-            x = layer(x)
-        x = self.time_emb_block_1(x, emb)
+        for layer in self.layers:            
+            if self.block_type == 'swin':
+                x = layer(x, x_size, params)
+            else:
+                x = layer(x)
+        
+        # x = self.time_emb_block_1(x, emb)
         return x
+
+
+class SwinLayer(nn.Module):
+    """ A basic ATD Block for one stage.
+
+    Args:
+        dim (int): Number of input channels.
+        input_resolution (tuple[int]): Input resolution.
+        idx (int): Block index.
+        depth (int): Number of blocks.
+        num_heads (int): Number of attention heads.
+        window_size (int): Local window size.
+        category_size (int): Category size for AC-MSA.
+        num_tokens (int): Token number for each token dictionary.
+        reducted_dim (int): Reducted dimension number for query and key matrix.
+        convffn_kernel_size (int): Convolutional kernel size for ConvFFN.
+        mlp_ratio (float): Ratio of mlp hidden dim to embedding dim.
+        qkv_bias (bool, optional): If True, add a learnable bias to query, key, value. Default: True
+        norm_layer (nn.Module, optional): Normalization layer. Default: nn.LayerNorm
+        downsample (nn.Module | None, optional): Downsample layer at the end of the layer. Default: None
+        use_checkpoint (bool): Whether to use checkpointing to save memory. Default: False.
+    """
+
+    def __init__(self,
+                 dim,
+                 depth,
+                 num_heads,
+                 window_size,
+                 convffn_kernel_size=5,
+                 mlp_ratio=4.,
+                 qkv_bias=True,
+                 norm_layer=nn.LayerNorm,
+                 downsample=None,
+                 use_checkpoint=False,
+                 img_size=224,
+                 patch_size=1,
+                 ):
+
+        super().__init__()
+        self.dim = dim
+        self.input_resolution = img_size
+        self.depth = depth
+        self.use_checkpoint = use_checkpoint
+        self.patch_embed = PatchEmbed(
+            img_size=img_size, patch_size=patch_size, in_chans=0, embed_dim=dim, norm_layer=None)
+        self.patch_unembed = PatchUnEmbed(
+            img_size=img_size, patch_size=patch_size, in_chans=0, embed_dim=dim, norm_layer=None)
+
+        self.conv = nn.Conv2d(dim, dim, 3, 1, 1)
+        self.layers = nn.ModuleList()
+        for i in range(depth):
+            self.layers.append(
+                SwinBlock(
+                    dim=dim,
+                    window_size=window_size,
+                    num_heads=num_heads,
+                    shift_size=0 if (i % 2 == 0) else window_size // 2,
+                    mlp_ratio=mlp_ratio,
+                    convffn_kernel_size=convffn_kernel_size,
+                    norm_layer=norm_layer,
+                    qkv_bias=qkv_bias
+                )
+            )
+
+        # patch merging layer
+        if downsample is not None:
+            self.downsample = downsample((img_size, img_size), dim=dim, norm_layer=norm_layer)
+        else:
+            self.downsample = None
+
+        # Token Dictionary
+        # self.td = nn.Parameter(torch.randn([num_tokens, dim]), requires_grad=True)
+
+    def forward(self, x, x_size, params):
+        x0 = x
+        x = self.patch_embed(x)
+        for layer in self.layers:
+            x = layer(x, x_size, params)
+        x = self.patch_unembed(x, x_size)
+        if self.downsample is not None:
+            x = self.downsample(x)
+        return x0 + self.conv(x)
+
+    def extra_repr(self) -> str:
+        return f'dim={self.dim}, input_resolution={self.input_resolution}, depth={self.depth}'
+
+    def flops(self, input_resolution=None):
+        flops = 0
+        for layer in self.layers:
+            flops += layer.flops(input_resolution)
+        if self.downsample is not None:
+            flops += self.downsample.flops(input_resolution)
+        return flops
+
 
 
 class EDSRBlock(nn.Module):
@@ -809,15 +927,19 @@ class ATD_pro(nn.Module):
                  block_type='edsr',
                  up_list=[],
                  down_list=[],
+                 encoder_list=[],
+                 decoder_list=[],
                  interpolation=None,
                  res=False,
                  num_last_layers=0,
+                #  repeat_list=[],
                  **kwargs):
         super().__init__()
         self.cond_lq = cond_lq
-        num_in_ch = in_chans
-        if cond_lq:
-            num_in_ch = in_chans * 2
+        # num_in_ch = in_chans
+
+        # if cond_lq:
+        #     num_in_ch = in_chans * 2
         num_out_ch = in_chans
         self.block_type = block_type
         num_feat = embed_dim
@@ -831,11 +953,12 @@ class ATD_pro(nn.Module):
         #     self.mean = torch.zeros(1, 1, 1, 1)
         self.upscale = upscale
         self.upsampler = upsampler
+        
         self.up_list = up_list
         self.down_list = down_list
 
         # ------------------------- 1, shallow feature extraction ------------------------- #
-        self.conv_first = nn.Conv2d(num_in_ch, embed_dim, 3, 1, 1)
+        # self.conv_first = nn.Conv2d(num_in_ch, embed_dim, 3, 1, 1)
 
         # ------------------------- 2, deep feature extraction ------------------------- #
         self.num_layers = len(depths)
@@ -852,25 +975,94 @@ class ATD_pro(nn.Module):
                 nn.SiLU(),
                 nn.Linear(time_embed_dim, time_embed_dim),
             )
-        
+        self.encoders = nn.ModuleList()
+        for scale in encoder_list:
+            in_chns = in_chans * scale ** 2
+            if cond_lq:
+                in_chns += in_chans
+            encoder = nn.Conv2d(in_chns, embed_dim, kernel_size=3, stride=1, padding=1)
+            self.encoders.append(encoder)
+        # for repeat_times in repeat_list:
+        #     in_chns = in_chans * repeat_times
+        #     if cond_lq:
+        #         in_chns += in_chans
+        #     encoder = nn.Conv2d(in_chns, embed_dim, kernel_size=3, stride=1, padding=1)
+        #     self.encoder_list.append(encoder)
 
+        if block_type == 'swin':
 
-        self.layers = nn.ModuleList()
-        for i_layer in range(self.num_layers):
-            self.layers.append(
-                BasicLayer(
+            # split image into non-overlapping patches
+            self.patch_embed = PatchEmbed(
+                img_size=img_size,
+                patch_size=patch_size,
+                in_chans=embed_dim,
+                embed_dim=embed_dim,
+                norm_layer=norm_layer if self.patch_norm else None)
+            num_patches = self.patch_embed.num_patches
+            patches_resolution = self.patch_embed.patches_resolution
+            self.patches_resolution = patches_resolution
+
+            # merge non-overlapping patches into image
+            self.patch_unembed = PatchUnEmbed(
+                img_size=img_size,
+                patch_size=patch_size,
+                in_chans=embed_dim,
+                embed_dim=embed_dim,
+                norm_layer=norm_layer if self.patch_norm else None)
+
+            # absolute position embedding
+            if self.ape:
+                self.absolute_pos_embed = nn.Parameter(torch.zeros(1, num_patches, embed_dim))
+                trunc_normal_(self.absolute_pos_embed, std=.02)
+
+            # relative position index
+            relative_position_index_SA = self.calculate_rpi_sa()
+            self.register_buffer('relative_position_index_SA', relative_position_index_SA)
+
+            self.layers = nn.ModuleList()
+            for i_layer in range(self.num_layers):
+                layer = BasicLayer(
                     emb_dim=embed_dim,
                     depth=depths[i_layer],
+                    num_heads=num_heads[i_layer],
+                    window_size=window_size,
                     time_embed_dim=time_embed_dim,
                     block_type=block_type,
+                    convffn_kernel_size=convffn_kernel_size,
+                    mlp_ratio=mlp_ratio,
                     dropout=dropout
                 )
-            )
+                self.layers.append(layer)
+            # self.norm = norm_layer(self.num_features)
+        else:
+            self.layers = nn.ModuleList()
+            for i_layer in range(self.num_layers):
+                self.layers.append(
+                    BasicLayer(
+                        emb_dim=embed_dim,
+                        depth=depths[i_layer],
+                        time_embed_dim=time_embed_dim,
+                        block_type=block_type,
+                        dropout=dropout
+                    )
+                )
+
 
         # build the last conv layer in deep feature extraction
         self.conv_after_body = nn.Conv2d(embed_dim, embed_dim, 3, 1, 1)
 
-        self.up_down_list = nn.ModuleList()
+        # self.encoder_list = nn.ModuleList()
+        # self.decoder_list = nn.ModuleList()
+
+
+        # self.up_down_list = nn.ModuleList()
+        self.decoders = nn.ModuleList()
+        for scale in decoder_list:
+            self.decoders.append(nn.Sequential(
+                nn.PixelShuffle(scale),
+                nn.Conv2d(embed_dim // (scale ** 2), num_out_ch, 3, 1, 1)
+            )
+            )
 
 
         if num_last_layers != 0:
@@ -887,17 +1079,17 @@ class ATD_pro(nn.Module):
         else:
             last_layers = None
 
-        for upscale, downscale in zip(up_list, down_list):
-            up_down_model = UpAndDownBeforeOut(
-                num_feat=num_feat,
-                upscale=upscale,
-                downscale=downscale,
-                outchns=num_out_ch,
-                upsampler=upsampler,
-                interpolation=interpolation,
-                last_layers=last_layers
-            )
-            self.up_down_list.append(up_down_model)
+        # for upscale, downscale in zip(up_list, down_list):
+        #     up_down_model = UpAndDownBeforeOut(
+        #         num_feat=num_feat,
+        #         upscale=upscale,
+        #         downscale=downscale,
+        #         outchns=num_out_ch,
+        #         upsampler=upsampler,
+        #         interpolation=interpolation,
+        #         last_layers=last_layers
+        #     )
+        #     self.up_down_list.append(up_down_model)
 
         
         self.apply(self._init_weights)
@@ -969,47 +1161,53 @@ class ATD_pro(nn.Module):
     def forward(self, x, timestep, sigma, lq=None, gt_size=None):
         x_size = (x.shape[2], x.shape[3])
         h_ori, w_ori = x_size
-        downscale = self.down_list[timestep]
-        upscale = self.up_list[timestep]
-
-        if self.block_type == 'swin':
-            mod = self.window_size * downscale
-        else:
-            mod = downscale
-        #time_embed
+        # downscale = self.down_list[timestep]
+        # upscale = self.up_list[timestep]
+        encoder = self.encoders[timestep]
+        decoder = self.decoders[timestep]
         sigma = sigma.to(torch.float32).reshape(-1, 1, 1, 1)
         c_noise = (sigma).log() / 4
         emb = self.time_embed(timestep_embedding(c_noise.flatten(), self.embed_dim)).type(x.dtype)
-        # padding
-        h_pad = ((h_ori + mod - 1) // mod) * mod - h_ori
-        w_pad = ((w_ori + mod - 1) // mod) * mod - w_ori
-        h, w = h_ori + h_pad, w_ori + w_pad
-        x = torch.cat([x, torch.flip(x, [2])], 2)[:, :, :h, :]
-        x = torch.cat([x, torch.flip(x, [3])], 3)[:, :, :, :w]
-        if lq != None and self.cond_lq:
-            lq = torch.cat([lq, torch.flip(lq, [2])], 2)[:, :, :h, :]
-            lq = torch.cat([lq, torch.flip(lq, [3])], 3)[:, :, :, :w]
-            x = torch.cat([lq, x], dim=1)
-        x_size = (h, w)
-        # if self.upsampler == 'consistency':
-        #     h = h // self.upscale
-        #     w = w // self.upscale
-        # self.mean = self.mean.type_as(x)
-        # x = (x - self.mean) * self.img_range
+
         if self.block_type == 'swin':
+            mod = self.window_size
+            h_pad = ((h_ori + mod - 1) // mod) * mod - h_ori
+            w_pad = ((w_ori + mod - 1) // mod) * mod - w_ori
+            h, w = h_ori + h_pad, w_ori + w_pad
+            x = torch.cat([x, torch.flip(x, [2])], 2)[:, :, :h, :]
+            x = torch.cat([x, torch.flip(x, [3])], 3)[:, :, :, :w]
+            if lq is not None and self.cond_lq:
+                lq = torch.cat([lq, torch.flip(lq, [2])], 2)[:, :, :h, :]
+                lq = torch.cat([lq, torch.flip(lq, [3])], 3)[:, :, :, :w]
+                x = torch.cat([lq, x], dim=1)
+            x_size = (h, w)
             attn_mask = self.calculate_mask([h, w]).to(x.device)
             params = {'attn_mask': attn_mask, 'rpi_sa': self.relative_position_index_SA}
+        else:
+            (h, w) = x_size
+            if lq is not None and self.cond_lq:
+                lq = torch.cat([lq, torch.flip(lq, [2])], 2)[:, :, :h, :]
+                lq = torch.cat([lq, torch.flip(lq, [3])], 3)[:, :, :, :w]
+                x = torch.cat([lq, x], dim=1)
 
-        x_first = self.conv_first(x)
+        # x_first = self.conv_first(x)
+        # x_first = self.encoder_list[timestep](x)
+        x_first = encoder(x)
         x_next = x_first
 
-        for layer in self.layers:
-            x_next = layer(x_next, emb)
-        out = self.conv_after_body(x_next) + x_first
-        if self.num_last_layers != 0:
-            out = self.up_down_list[timestep](out, emb)
+        if self.block_type == 'swin':
+            for layer in self.layers:
+                x_next = layer(x_next, emb, x_size=x_size, params=params)
         else:
-            out = self.up_down_list[timestep](out,)
+            for layer in self.layers:
+                x_next = layer(x_next, emb)
+        out = self.conv_after_body(x_next) + x_first
+        # if self.num_last_layers != 0:
+        #     out = self.up_down_list[timestep](out, emb)
+        # else:
+        #     out = self.up_down_list[timestep](out,)
+        out = decoder(out)
+
 
         if gt_size is not None:
             out = out[..., :gt_size, :gt_size]
@@ -1039,6 +1237,65 @@ class ATD_pro(nn.Module):
 
         return flops
     
+
+# class Encoder(nn.Module):
+#     def __init__(
+#             self,
+#             upscale,
+#             downscale,
+#             in_chans,
+#             repeat_times,
+#             cond_lq,
+#             emb_dim,
+#     ):
+#         super().__init__()
+#         self.cond_lq = cond_lq
+#         self.upscale = upscale
+#         self.downscale = downscale
+#         num_in_chns = in_chans * repeat_times
+#         if cond_lq:
+#             num_in_chns += 3
+#         self.conv_first = nn.Conv2d(num_in_chns, emb_dim, 3, 1, 1)
+#         self.downsample = nn.Sequential(nn.PixelUnshuffle(downscale))
+#         self.upsample = nn.Sequential(nn.PixelShuffle(upscale))
+    
+#     def forward(self, x, lq=None):
+#         # x = x.repeat(1, 3, 1, 1)
+#         if lq is not None and self.cond_lq:
+#             x = torch.cat([x, lq], dim=1)
+#         x = self.conv_first(x)
+#         return x
+    
+
+
+
+# class Decoder(nn.Module):
+#     def __init__(
+#             self,
+#             upscale,
+#             downscale,
+#             in_chans,
+#             repeat_times,
+#             cond_lq,
+#             emb_dim,
+#     ):
+#         super().__init__()
+#         self.cond_lq = cond_lq
+#         self.upscale = upscale
+#         self.downscale = downscale
+#         num_in_chns = in_chans * repeat_times
+#         if cond_lq:
+#             num_in_chns += 3
+#         self.conv_first = nn.Conv2d(num_in_chns, emb_dim, 3, 1, 1)
+    
+#     def forward(self, x, lq=None):
+#         # x = x.repeat(1, 3, 1, 1)
+#         if lq is not None and self.cond_lq:
+#             x = torch.cat([x, lq], dim=1)
+#         x = self.conv_first(x)
+#         return x
+
+
 class ResBlock(nn.Module):
     """
     A residual block that can optionally change the number of channels.

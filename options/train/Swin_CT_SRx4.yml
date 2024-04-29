@@ -1,18 +1,20 @@
 
 # general settings
-name: CT_bicx4_charbonnier_one_backbone_naf_layer_3_depth_4_last_1_sigma_1_pxl_iter_40w_prog
+name: CT_bicx4_afhq_repeat_adaptive_step_5_l2loss_mul_step_one_backbone_naf_layer_8_depth_6_sigma_1_pxl_iter_40w
 model_type: EDSR2Model
 scale: 4
-num_gpu: 2
+num_gpu: 1
 manual_seed: 0
 find_unused_parameters: True
 
 # dataset and data loader settings
 datasets:
   train:
-    name: ImageNet
+    name: afhqv2_256
+    # name: ImageNet
     type: ImageNetPairedDataset
-    dataroot_gt: /data/datasets/ImageNet/data/ImageNet2012/ILSVRC2012_img_train
+    # dataroot_gt: /data/datasets/ImageNet/data/ImageNet2012/ILSVRC2012_img_train
+    dataroot_gt: /data/datasets/afhqv2-256x256_train
     dataroot_lq: 
     filename_tmpl: '{}x4'
     io_backend:
@@ -22,8 +24,8 @@ datasets:
     upscale: 4
     downscale: 1
     upsample: False
-    use_hflip: true
-    use_rot: true
+    use_hflip: false
+    use_rot: False
     mean: 0.5
     std: 0.5
 
@@ -36,10 +38,12 @@ datasets:
     persistent_workers: True
 
   val_1:
-    name: ImageNet
+    # name: ImageNet
+    name: AFHQv2
     type: ImageNetPairedDataset
-    dataroot_gt: ./validation/ImageNet/Bicubicx4/gt
-    dataroot_lq: ./validation/ImageNet/Bicubicx4/lq_opencv
+    # dataroot_gt: ./validation/ImageNet/Bicubicx4/gt
+    dataroot_gt: ./validation/afhqv2_256/bicx4/gt
+    dataroot_lq: 
     mean: 0.5
     std: 0.5
     gt_size: 256
@@ -87,9 +91,9 @@ network_g:
 
   in_chans: 3
   gt_size: 256
-  embed_dim: 64
-  depths: [4, 4, 4,]
-  num_heads: [6, 6, 6, 6, 6, 6,]
+  embed_dim: 96
+  depths: [6, 6, 6, 6, 6, 6, 6, 6]
+  num_heads: [6, 6, 6, 6, 6, 6, 6, 6]
   window_size: 16
   convffn_kernel_size: 5
   img_range: 1.
@@ -102,9 +106,15 @@ network_g:
   dropout: 0.1
   time_emb: True
   block_type: 'naf'
-  num_last_layers: 1
-  up_list: [4, 3, 2, 4]
-  down_list: [1, 1, 1, 3]
+  # num_last_layers: 1
+  # encoder_up_list: [1, 2, 1, 1]
+  # encoder_down_list: [1, 3, 2, 3]
+  # repeat_list: [16, 9, 4,]
+  # input_scale_list: [4, 4, 2, 2, 2]
+  # up_list: [4, 8, 2, 8, 4]
+  # down_list: [1, 3, 1, 5, 3]
+  encoder_list: [2, 4]
+  decoder_list: [2, 4]
   res: false
 
 # path
@@ -138,17 +148,21 @@ train:
   #   loss_weight: 1.0
   #   reduction: mean
   consistency_opt:
-    type: CharbonnierLoss
+    type: MSELoss
+    input_scale_list: [4, 4, 2, 2, 2]
+    up_list: [4, 8, 2, 8, 4]
+    down_list: [1, 3, 1, 5, 3]
     sigma_min: 0
     sigma_max: 1
     rho: 1
     skip: True
+    multi_step: True
 
 
 # validation settings
 val:
-  val_freq: 1000
-  save_img: false
+  val_freq: 2000
+  save_img: true
 
   metrics:
     psnr: # metric name, can be arbitrary
@@ -170,7 +184,7 @@ logger:
   print_freq: 100
   tb_freq: 500
   save_checkpoint_freq: !!float 1e4
-  use_tb_logger: true
+  use_tb_logger: False
   wandb:
     project: ~
     resume_id: ~
