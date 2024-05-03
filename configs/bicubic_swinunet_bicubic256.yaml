@@ -1,0 +1,137 @@
+model:
+  target: models.unet.UNetModelSwin
+  ckpt_path: ~
+  params:
+    image_size: 256
+    in_channels: 6
+    model_channels: 160
+    out_channels: 3
+    cond_lq: True
+    attention_resolutions: [256,128,64,32]
+    dropout: 0
+    channel_mult: [1, 2, 2, 4]
+    num_res_blocks: [2, 2, 2, 2]
+    conv_resample: True
+    dims: 2
+    use_fp16: False
+    num_head_channels: 32
+    use_scale_shift_norm: True
+    resblock_updown: False
+    swin_depth: 2
+    swin_embed_dim: 192
+    window_size: 8
+    mlp_ratio: 4
+    sigma_data: 0.5
+    sigma_min: 0
+
+diffusion:
+  target: models.script_util.create_gaussian_diffusion
+  params:
+    sf: 4
+    schedule_name: exponential
+    schedule_kwargs:
+      power: 0.3
+    etas_end: 0.99
+    steps: 15
+    min_noise_level: 0.04
+    kappa: 1.0
+    weighted_mse: False
+    predict_type: xstart
+    timestep_respacing: ~
+    scale_factor: 1.0
+    normalize_input: True
+    latent_flag: True
+
+consistency:
+  params:
+    rho: 1
+    s0: 8
+    s1: 2
+    P_mean: 0
+    P_std: 0
+    sigma_min: 0
+    sigma_max: 2
+    loss_type: [l2]
+  log_path: ./log/CT_sigma_2_rho_1_l2_8_2_60w
+
+autoencoder: ~
+#   target: ldm.models.autoencoder.VQModelTorch
+#   ckpt_path: weights/autoencoder/autoencoder_vq_f4.pth
+#   use_fp16: True
+#   params:
+#     embed_dim: 3
+#     n_embed: 8192
+#     ddconfig:
+#       double_z: False
+#       z_channels: 3
+#       resolution: 256
+#       in_channels: 3
+#       out_ch: 3
+#       ch: 128
+#       ch_mult:
+#       - 1
+#       - 2
+#       - 4
+#       num_res_blocks: 2
+#       attn_resolutions: []
+#       dropout: 0.0
+#       padding_mode: zeros
+
+data:
+  train:
+    type: bicubic
+    params:
+      sf: 4
+      dir_path: /data/datasets/ImageNet/data/ImageNet2012/ILSVRC2012_img_train
+      txt_file_path: 
+      mean: 0.5
+      std: 0.5
+      hflip: True
+      rotation: False
+      resize_back: False
+      length: ~
+      need_path: False
+      im_exts: ['png', 'jpg', 'jpeg', 'JPEG', 'bmp']
+      recursive: False
+      use_sharp: False
+      rescale_gt: True
+      gt_size: 256
+      matlab_mode: False
+  val:
+    type: bicubic
+    params:
+      sf: 4
+      dir_path: testdata/Bicubicx4/gt
+      txt_file_path: ~
+      mean: 0.5
+      std: 0.5
+      hflip: False
+      rotation: False
+      resize_back: False
+      length: ~
+      need_path: False
+      im_exts: ['png', 'jpg', 'jpeg', 'JPEG', 'bmp']
+      recursive: False
+      use_sharp: False
+      rescale_gt: False
+      gt_size: 256
+      matlab_mode: False
+
+train:
+  lr: 5e-5
+  batch: [8, 1]   # batchsize for training and validation
+  use_fp16: False
+  microbatch: 8
+  seed: 123456
+  global_seeding: False
+  prefetch_factor: 4
+  num_workers: 8
+  ema_rate: 0.999
+  iterations: 600000
+  milestones: [5000, 500000]
+  weight_decay: 0
+  save_freq: 10000
+  val_freq: 1000
+  log_freq: [100, 5000, 1] #[training loss, training images, val images]
+  save_images: True  # save the images of tensorboard logging
+  use_ema_val: True

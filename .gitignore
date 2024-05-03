@@ -1,3 +1,5 @@
-./weights
-./output
-./ImageNet-Test
+weights
+output
+ImageNet-Test
+log
+saved_logs
