@@ -201,7 +201,7 @@ def generate_lq(gt, upscale,):
 
     return lq_imgs
 
-def generate_hq(lq, upscale,):
+def generate_hq(lq, upscale, mode='bicubic'):
     # upscale = int(upscale)
     lq = (lq + 1.0) / 2
     h_ori, w_ori = lq.shape[-2:]
@@ -211,7 +211,10 @@ def generate_hq(lq, upscale,):
     # print('gt_imgs.shape', gt_imgs.shape)
     hq_imgs = []
     for img in lq:
-        hq = cv2.resize(img, (h, w), interpolation=cv2.INTER_CUBIC)
+        if mode == 'bicubic':
+            hq = cv2.resize(img, (h, w), interpolation=cv2.INTER_CUBIC)
+        elif mode == 'nearest':
+            hq = cv2.resize(img, (h, w), interpolation=cv2.INTER_NEAREST)
         hq_imgs.append(hq)
     hq_imgs = np.array(hq_imgs)
     hq_imgs = torch.from_numpy(hq_imgs.transpose(0, 3, 1, 2))

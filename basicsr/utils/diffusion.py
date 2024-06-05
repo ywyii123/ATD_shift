@@ -5,7 +5,87 @@ from torch import Tensor
 from basicsr.utils.img_util import generate_hq, generate_lq
 
 
+def improved_timesteps_schedule_decrease(
+    current_training_step: int,
+    total_training_steps: int,
+    initial_timesteps: int = 10,
+    final_timesteps: int = 1280,
+    constant_steps: int = 0
+) -> int:
+    """Implements the improved timestep discretization schedule.
+
+    Parameters
+    ----------
+    current_training_step : int
+        Current step in the training loop.
+    total_training_steps : int
+        Total number of steps the model will be trained for.
+    initial_timesteps : int, default=2
+        Timesteps at the start of training.
+    final_timesteps : int, default=150
+        Timesteps at the end of training.
+
+    Returns
+    -------
+    int
+        Number of timesteps at the current point in training.
+
+    """
+    if constant_steps == 0:
+        total_training_steps_prime = math.floor(
+            total_training_steps
+            / (math.log2(math.floor(initial_timesteps / final_timesteps)) + 1)
+        )
+        num_timesteps = initial_timesteps // math.pow(
+            2, math.floor(current_training_step / total_training_steps_prime)
+        )
+        num_timesteps = max(num_timesteps, final_timesteps) + 1
+    else:
+        num_timesteps = constant_steps + 1
+
+    return num_timesteps
+
 def improved_timesteps_schedule(
+    current_training_step: int,
+    total_training_steps: int,
+    initial_timesteps: int = 10,
+    final_timesteps: int = 1280,
+    constant_steps: int = 0
+) -> int:
+    """Implements the improved timestep discretization schedule.
+
+    Parameters
+    ----------
+    current_training_step : int
+        Current step in the training loop.
+    total_training_steps : int
+        Total number of steps the model will be trained for.
+    initial_timesteps : int, default=2
+        Timesteps at the start of training.
+    final_timesteps : int, default=150
+        Timesteps at the end of training.
+
+    Returns
+    -------
+    int
+        Number of timesteps at the current point in training.
+
+    """
+    if constant_steps == 0:
+        total_training_steps_prime = math.floor(
+            total_training_steps
+            / (math.log2(math.floor(initial_timesteps / final_timesteps)) + 1)
+        )
+        num_timesteps = initial_timesteps // math.pow(
+            2, math.floor(current_training_step / total_training_steps_prime)
+        )
+        num_timesteps = max(num_timesteps, final_timesteps) + 1
+    else:
+        num_timesteps = constant_steps + 1
+
+    return num_timesteps
+
+def improved_timesteps_schedule_increase(
     current_training_step: int,
     total_training_steps: int,
     initial_timesteps: int = 10,
@@ -37,12 +117,12 @@ def improved_timesteps_schedule(
     if constant_steps == 0:
         total_training_steps_prime = math.floor(
             total_training_steps
-            / (math.log2(math.floor(initial_timesteps / final_timesteps)) + 1)
+            / (math.log2(math.floor(final_timesteps / initial_timesteps)) + 1)
         )
-        num_timesteps = initial_timesteps // math.pow(
+        num_timesteps = initial_timesteps * math.pow(
             2, math.floor(current_training_step / total_training_steps_prime)
         )
-        num_timesteps = max(num_timesteps, final_timesteps) + 1
+        num_timesteps = min(num_timesteps, final_timesteps) + 1
     else:
         num_timesteps = constant_steps + 1
 

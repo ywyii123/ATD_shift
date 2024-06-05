@@ -1,9 +1,9 @@
 
 # general settings
-name: CT_bicx4_LPIPSloss_imagenet_swin_8_2_nearest_upsample_shift_layer_10_depth_4_sigma_2_iter_40w
-model_type: EDSR3Model
+name: CT_bicx4_lpipsloss_imagenet_resshift_8_2_60w
+model_type: ResModel
 scale: 4
-num_gpu: 2
+num_gpu: 4
 manual_seed: 0
 find_unused_parameters: True
 
@@ -28,8 +28,8 @@ datasets:
     std: 0.5
 
     # data loader
-    num_worker_per_gpu: 6
-    batch_size_per_gpu: 6
+    num_worker_per_gpu: 4
+    batch_size_per_gpu: 2
     dataset_enlarge_ratio: 1
     prefetch_mode: cuda
     pin_memory: True
@@ -85,30 +85,34 @@ datasets:
 
 # network structures
 network_g:
-  type: EDSR_pro
+  type: UNetModelSwin
 
-  in_chans: 3
-  gt_size: 256
-  embed_dim: 192
-  depths: [4, 4, 4, 4, 4, 4, 4, 4, 4, 4]
-  num_heads: [6, 6, 6, 6, 6, 6, 6, 6, 6, 6]
-  window_size: 16
-  convffn_kernel_size: 5
-  img_range: 1.
-  mlp_ratio: 2
-  use_checkpoint: False
-  channel_mult_emb: 4
+  image_size: 256
+  in_channels: 6
+  model_channels: 160
+  out_channels: 3
   cond_lq: True
-  dropout: 0.1
-  time_emb: True
-  scale: 4
-  block_type: 'swin'
+  attention_resolutions: [256, 128, 64, 32]
+  dropout: 0
+  channel_mult: [1, 2, 2, 4]
+  num_res_blocks: [2, 2, 2, 2]
+  conv_resample: True
+  dims: 2
+  use_fp16: False
+  num_head_channels: 32
+  use_scale_shift_norm: True
+  resblock_updown: False
+  swin_depth: 2
+  swin_embed_dim: 192
+  window_size: 8
+  mlp_ratio: 4
 
 
 # path
 path:
   pretrain_network_g: ~
-  # pretrain_network_g: experiments/CT_bicx4_l2loss_imagenet_swin_cons_8_nearest_upsample_shift_layer_10_depth_4_sigma_2_iter_40w/models/net_g_20000.pth
+  # pretrain_network_g: experiments/CT_bicx4_l2loss_swin_multi_step_5_shift_layer_8_depth_6_sigma_1_iter_40w/models/net_g_180000.pth
+  strict_load_g: true
   # resume_state: experiments/CT_bicx4_l2loss_swin_multi_step_5_shift_layer_8_depth_6_sigma_1_iter_40w/training_states/180000.state
   resume_state: ~
 
@@ -145,7 +149,7 @@ train:
     multi_step: false
     p_mean: 0
     p_std: 0
-    skip: true
+    skip: false
 
 # validation settings
 val:
@@ -172,7 +176,7 @@ logger:
   print_freq: 100
   tb_freq: 1000
   save_checkpoint_freq: !!float 1e4
-  use_tb_logger: false
+  use_tb_logger: True
   wandb:
     project: ~
     resume_id: ~

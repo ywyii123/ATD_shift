@@ -1205,7 +1205,7 @@ class EDSR_pro(nn.Module):
         self.scale = scale
         if cond_lq:
             num_in_ch = num_in_ch + in_chans
-        num_out_ch = in_chans * (scale ** 2)
+        num_out_ch = in_chans
         # num_out_ch = in_chans
         num_feat = embed_dim
         self.img_range = img_range
@@ -1299,6 +1299,7 @@ class EDSR_pro(nn.Module):
         # build the last conv layer in deep feature extraction
         
         self.conv_after_body = nn.Conv2d(num_feat, num_feat, 3, 1, 1)
+        self.conv_before_upsample = nn.Conv2d(num_feat, num_feat * (scale ** 2), 3, 1, 1)
         self.conv_last = nn.Conv2d(num_feat, num_out_ch, 3, 1, 1)
         
         self.apply(self._init_weights)
@@ -1415,8 +1416,9 @@ class EDSR_pro(nn.Module):
         # c_skip = self.sigma_data ** 2 / ((sigma - self.sigma_min) ** 2 + self.sigma_data ** 2)
         c_out = (sigma / 0.1) * sigma_data / ((sigma / 0.1) ** 2 + sigma_data ** 2).sqrt()
         # c_out = (sigma - self.sigma_min) * self.sigma_data / (sigma ** 2 + self.sigma_data ** 2).sqrt()
-        x_next = self.conv_last(x_next)
+        x_next = self.conv_before_upsample(x_next)
         out = self.decoder(x_next)
+        out = self.conv_last(out)
         out = c_skip * x_ori + c_out * out.to(torch.float32)
 
         return out

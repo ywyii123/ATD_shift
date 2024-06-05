@@ -9,27 +9,28 @@ from basicsr.archs import build_network
 from basicsr.losses import build_loss
 from basicsr.metrics import calculate_metric
 from basicsr.utils import get_root_logger, imwrite, tensor2img, skip_schedule
-from basicsr.utils.diffusion import improved_timesteps_schedule, karras_schedule, lognormal_timestep_distribution, q_sample
+from basicsr.utils.diffusion import improved_timesteps_schedule_increase, improved_timesteps_schedule_decrease, karras_schedule, lognormal_timestep_distribution, q_sample
 from basicsr.utils.registry import MODEL_REGISTRY
 from basicsr.utils import generate_lq
+from utils.img_util import generate_hq
 from .base_model import BaseModel
 import torch.distributed as dist
 import lpips
 
 
 @MODEL_REGISTRY.register()
-class SR4Model(BaseModel):
+class SREdmSRNetModel(BaseModel):
     """Base SR model for single image super-resolution."""
 
     def __init__(self, opt):
-        super(SR4Model, self).__init__(opt)
+        super(SREdmSRNetModel, self).__init__(opt)
 
         self.opt = opt
         # define network
         self.net_g = build_network(opt['network_g'])
         self.net_g = self.model_to_device(self.net_g)
 
-        self.lpips_loss = lpips.LPIPS(net='vgg')
+        self.lpips_loss = lpips.LPIPS(net='alex')
         self.print_network(self.net_g)
 
         # load pretrained models
@@ -114,7 +115,10 @@ class SR4Model(BaseModel):
             self.lq_upsample = data['lq_upsample'].to(self.device)
 
     def optimize_parameters(self, current_iter, tb_logger=None, log_iter=None):
-        gt_size = self.opt['network_g']['gt_size']
+        # gt_size = self.opt['network_g']['gt_size']
+        up_list = self.opt['network_g']['up_list']
+        down_list = self.opt['network_g']['down_list']
+        scale = self.opt['network_g']['scale']
         self.optimizer_g.zero_grad()
         l_total = 0
         loss_dict = OrderedDict()
@@ -137,7 +141,7 @@ class SR4Model(BaseModel):
         # consistency loss
         if self.cri_consistency:
             consistency_opt = self.opt['train']['consistency_opt']
-            multi_step = consistency_opt.get('multi_step', False)
+            # multi_step = consistency_opt.get('multi_step', False)
             # skip = consistency_opt.get('skip', False)
             sigma_min = consistency_opt.get('sigma_min', 0)
             sigma_max = consistency_opt.get('sigma_max', 2)
@@ -145,14 +149,18 @@ class SR4Model(BaseModel):
             s1 = consistency_opt.get('s1')
             p_mean = consistency_opt.get('p_mean', 0)
             p_std = consistency_opt.get('p_std', 0)
-            constant_steps = consistency_opt.get('constant_steps', 0)
             rho = consistency_opt.get('rho', 1)
             total_iter = self.opt['train']['total_iter']
-            num_steps = improved_timesteps_schedule(current_iter, total_iter, initial_timesteps=s0,
-                                                    final_timesteps=s1, constant_steps=constant_steps)
+            if s0 > s1:
+                num_steps = improved_timesteps_schedule_decrease(current_iter, total_iter, s0, s1,)
+            elif s0 < s1:
+                num_steps = improved_timesteps_schedule_increase(current_iter, total_iter, s0, s1,)
+            else:
+                num_steps = s0 + 1
             num_steps = int(num_steps)
             sigmas = karras_schedule(num_steps, sigma_min, sigma_max, rho, device=self.device)
             sigmas = sigmas.flip(dims=(0,))
+            # print(sigmas)
             # if dist.get_rank() == 0:
             #     print(f'num_steps: {num_steps}')
             #     print(f'sigmas: {sigmas}')
@@ -164,31 +172,61 @@ class SR4Model(BaseModel):
                 timestep = lognormal_timestep_distribution(1, sigmas, p_mean, p_std)
                 index = timestep.repeat(self.gt.shape[0])
 
-            noise = torch.randn_like(self.gt)
+            # noise = torch.randn_like(self.gt)
             cur_sigma = sigmas[index].reshape(-1, 1, 1, 1)
+            next_sigma = sigmas[index + 1].reshape(-1, 1, 1, 1)
             # if dist.get_rank() == 0:
             #     print(f'cur_sigma: {cur_sigma}')
-            x_cur = q_sample(self.gt, self.lq_upsample, sigmas, index, noise)
+            # x_cur = q_sample(self.gt, self.lq_upsample, sigmas, index, noise)
+            cur_scale = scale * up_list[timestep] / down_list[timestep]
+            x_cur = generate_lq(self.gt, cur_scale).to(self.device)
+            cur_cond_scale = down_list[timestep] / up_list[timestep]
+            lq_cur_cond = generate_hq(self.lq, cur_cond_scale)
             
-            # print(sigmas)
-            # print(timestep)
-            if multi_step == False:
-                # if timestep + 1 == (num_steps - 1):
-                #     x_next = self.gt
-                #     distiller_target = self.gt
-                # else:
-                next_sigma = sigmas[index + 1].reshape(self.gt.shape[0], 1, 1, 1)
-                x_next = q_sample(self.gt, self.lq_upsample, sigmas, index + 1, noise)
-                with torch.no_grad():
-                    distiller_target = self.net_g(x_next, next_sigma, lq=self.lq).detach()
-            else:
-                x_next = self.gt
-                distiller_target = self.gt
+            
+            
 
-            distiller = self.net_g(x_cur, cur_sigma, lq=self.lq)
+            next_scale = scale * up_list[timestep + 1] / down_list[timestep + 1]
+            next_cond_scale = down_list[timestep + 1] / up_list[timestep + 1]
+            lq_next_cond = generate_hq(self.lq, next_cond_scale)
+            x_next = generate_lq(self.gt, next_scale).to(self.device)
+
+            noise_lq = torch.randn_like(self.lq).to(self.device)
+            noise_cur = torch.nn.functional.interpolate(noise_lq, scale_factor=cur_cond_scale, mode='nearest')
+            noise_next = torch.nn.functional.interpolate(noise_lq, scale_factor=next_cond_scale, mode='nearest')
+
+            # noise_cur = torch.randn_like(x_cur).to(self.device)
+            # noise_next = torch.nn.functional.interpolate(noise_cur, scale_factor=cur_scale/next_scale, mode='nearest')
+            # noise = torch.randn_like(x_next).to(self.device)
+
+            x_cur = x_cur + noise_cur * cur_sigma
+            x_next = x_next + noise_next * next_sigma
+
+            if cur_scale == 1:
+                x_cur_skip = x_cur
+            else:
+                x_cur_skip = generate_hq(x_cur, cur_scale, mode='nearest')
+            if next_scale == 1:
+                x_next_skip = x_next
+            else:
+                x_next_skip = generate_hq(x_next, next_scale, mode='nearest')
+
+            with torch.no_grad():
+                if timestep == num_steps - 2:
+                    distiller_target = self.net_g(x_next, sigma=next_sigma, x_lr=lq_next_cond, timestep=timestep, x_skip=x_next_skip).detach()
+                else:
+                    distiller_target = self.net_g(x_next, sigma=next_sigma, x_lr=lq_next_cond, timestep=timestep + 1, x_skip=x_next_skip).detach()
+                # distiller_target = self.net_g(x_cur, sigma=cur_sigma, x_lr=lq_cur_cond, timestep=timestep).detach()
+
+            distiller = self.net_g(x_cur, sigma=cur_sigma, x_lr=lq_cur_cond, timestep=timestep, x_skip=x_cur_skip)
 
             l_consistency = self.cri_consistency(distiller, distiller_target)
-
+            l_total += l_consistency
+            loss_dict['l_consistency'] = l_consistency
+            if self.cri_pix:
+                l_pix = self.cri_pix(distiller, distiller_target)
+                l_total += l_pix
+                loss_dict['l_pix'] = l_pix
 
             if dist.get_rank() == 0 and current_iter % log_iter == 0 and tb_logger is not None:
                 # lq_tensor = ((self.lq + 1.0) / 2).clamp(0, 1)
@@ -300,8 +338,7 @@ class SR4Model(BaseModel):
         for idx, val_data in enumerate(dataloader):
             img_name = osp.splitext(osp.basename(val_data['gt_path'][0]))[0]
             self.feed_data(val_data)
-            gt_size = val_data['gt'].shape[-1]
-            self.test(gt_size=gt_size)
+            self.test()
 
             visuals = self.get_current_visuals()
             # print(torch.max(visuals['result']).item())

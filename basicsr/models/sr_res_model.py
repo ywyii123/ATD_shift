@@ -18,18 +18,18 @@ import lpips
 
 
 @MODEL_REGISTRY.register()
-class SR4Model(BaseModel):
+class SRResModel(BaseModel):
     """Base SR model for single image super-resolution."""
 
     def __init__(self, opt):
-        super(SR4Model, self).__init__(opt)
+        super(SRResModel, self).__init__(opt)
 
         self.opt = opt
         # define network
         self.net_g = build_network(opt['network_g'])
         self.net_g = self.model_to_device(self.net_g)
 
-        self.lpips_loss = lpips.LPIPS(net='vgg')
+        self.lpips_loss = lpips.LPIPS(net='alex')
         self.print_network(self.net_g)
 
         # load pretrained models
@@ -114,7 +114,7 @@ class SR4Model(BaseModel):
             self.lq_upsample = data['lq_upsample'].to(self.device)
 
     def optimize_parameters(self, current_iter, tb_logger=None, log_iter=None):
-        gt_size = self.opt['network_g']['gt_size']
+        # gt_size = self.opt['network_g']['gt_size']
         self.optimizer_g.zero_grad()
         l_total = 0
         loss_dict = OrderedDict()
@@ -180,12 +180,12 @@ class SR4Model(BaseModel):
                 next_sigma = sigmas[index + 1].reshape(self.gt.shape[0], 1, 1, 1)
                 x_next = q_sample(self.gt, self.lq_upsample, sigmas, index + 1, noise)
                 with torch.no_grad():
-                    distiller_target = self.net_g(x_next, next_sigma, lq=self.lq).detach()
+                    distiller_target = self.net_g(x_next, next_sigma, lq=self.lq_upsample).detach()
             else:
                 x_next = self.gt
                 distiller_target = self.gt
 
-            distiller = self.net_g(x_cur, cur_sigma, lq=self.lq)
+            distiller = self.net_g(x_cur, cur_sigma, lq=self.lq_upsample)
 
             l_consistency = self.cri_consistency(distiller, distiller_target)
 

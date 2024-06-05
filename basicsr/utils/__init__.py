@@ -7,7 +7,7 @@ from .logger import AvgTimer, MessageLogger, get_env_info, get_root_logger, init
 from .misc import check_resume, get_time_str, make_exp_dirs, mkdir_and_rename, scandir, set_random_seed, sizeof_fmt, \
     scandir_SIDD
 from .options import yaml_load
-from .diffusion import improved_timesteps_schedule, karras_schedule, lognormal_timestep_distribution, improved_loss_weighting, pseudo_huber_loss, q_sample, skip_schedule
+from .diffusion import improved_timesteps_schedule_decrease, improved_timesteps_schedule_increase, karras_schedule, lognormal_timestep_distribution, improved_loss_weighting, pseudo_huber_loss, q_sample, skip_schedule, improved_timesteps_schedule
 from .util_image import batch_SSIM, batch_PSNR
 __all__ = [
     #  color_util.py
@@ -49,7 +49,8 @@ __all__ = [
     # options
     'yaml_load',
     # diffuion.py
-    'improved_timesteps_schedule',
+    'improved_timesteps_schedule_increase',
+    'improved_timesteps_schedule_decrease',
     'karras_schedule',
     'lognormal_timestep_distribution',
     'improved_loss_weighting',

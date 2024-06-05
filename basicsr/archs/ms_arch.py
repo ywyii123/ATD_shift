@@ -976,7 +976,8 @@ class MS(nn.Module):
                 upscale=upscale,
                 downscale=downscale,
                 emb_dim=embed_dim,
-                outchns=num_out_ch
+                outchns=num_out_ch,
+                interpolation=interpolation,
             )
             self.encoders.append(encoder)
             self.decoders.append(decoder)
@@ -1245,27 +1246,37 @@ class Decoder(nn.Module):
             downscale,
             emb_dim,
             outchns=3,
+            interpolation=None,
     ):
         super().__init__()
         self.upscale = upscale
         self.downscale = downscale
-        self.upsample = nn.Sequential(
-            nn.Conv2d(emb_dim, emb_dim * (upscale ** 2), 3, 1, 1),
-            nn.PixelShuffle(upscale)
-        )
-        if downscale != 1:
-            self.downsample = nn.PixelUnshuffle(downscale)
+        self.interpolation = interpolation
+        if interpolation is None:
+            self.upsample = nn.Sequential(
+                nn.Conv2d(emb_dim, emb_dim * (upscale ** 2), 3, 1, 1),
+                nn.PixelShuffle(upscale)
+            )
+            if downscale != 1:
+                self.downsample = nn.PixelUnshuffle(downscale)
+            else:
+                self.downsample = nn.Identity()
+            in_chns = emb_dim * (downscale ** 2) 
+            self.conv_last = nn.Conv2d(in_chns, outchns, 3, 1, 1)
         else:
-            self.downsample = nn.Identity()
-        in_chns = emb_dim * (downscale ** 2) 
-        self.conv_last = nn.Conv2d(in_chns, outchns, 3, 1, 1)
+            self.scale = upscale / downscale
+            self.conv_up = nn.Conv2d(emb_dim, emb_dim, 3, 1, 1)
+            self.conv_last = nn.Conv2d(emb_dim, outchns, 3, 1, 1)
     
     def forward(self, x,):
-        # x = x.repeat(1, 3, 1, 1)
-
-        x = self.upsample(x)
-        x = self.downsample(x)
-        x = self.conv_last(x)
+        if self.interpolation is None:
+            x = self.upsample(x)
+            x = self.downsample(x)
+            x = self.conv_last(x)
+        else:
+            x = F.interpolate(x, scale_factor=self.scale, mode=self.interpolation)
+            x = self.conv_up(x)
+            x = self.conv_last(x)
         return x
 
 

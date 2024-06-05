@@ -3,14 +3,13 @@ import torch
 from basicsr.utils.diffusion import karras_schedule, p_sample_loop
 from basicsr.utils.registry import MODEL_REGISTRY
 from basicsr.models.base_model import BaseModel
-# from .sr_model import SRModel, SR2Model
-from basicsr.models.sr4_model import SR4Model
+from basicsr.models.sr_res_model import SRResModel
 
 from basicsr.utils import generate_lq
 
 
 @MODEL_REGISTRY.register()
-class EDSR3Model(SR4Model):
+class ResModel(SRResModel):
 
     def test(self, gt_size=None):
         
@@ -30,11 +29,11 @@ class EDSR3Model(SR4Model):
             if hasattr(self, 'net_g_ema'):
                 self.net_g_ema.eval()
                 with torch.no_grad():
-                    self.output = self.net_g_ema(input, sigma=sigma, lq=self.lq_upsample,)
+                    self.output = self.net_g_ema(input, timesteps=sigma, lq=self.lq_upsample,)
             else:
                 self.net_g.eval()
                 with torch.no_grad():
-                    self.output = self.net_g(input, sigma=sigma, lq=self.lq_upsample,)
+                    self.output = self.net_g(input, timesteps=sigma, lq=self.lq_upsample,)
                 self.net_g.train()
         else:
             if hasattr(self, 'net_g_ema'):

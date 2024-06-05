@@ -1,9 +1,9 @@
 
 # general settings
-name: CT_bicx4_LPIPSloss_imagenet_swin_8_2_nearest_upsample_shift_layer_10_depth_4_sigma_2_iter_40w
-model_type: EDSR3Model
+name: CT_bicx4_imagenet_sigma_0.5_rho_0.5_edm_srnet_lpips_step_4_30w
+model_type: EdmSRNetModel
 scale: 4
-num_gpu: 2
+num_gpu: 4
 manual_seed: 0
 find_unused_parameters: True
 
@@ -22,14 +22,14 @@ datasets:
 
     gt_size: 256
     scale: 4
-    upsample: True
-    upsampler: 'nearest'
+    upsample: False
+    upsampler: 'bicubic'
     mean: 0.5
     std: 0.5
 
     # data loader
-    num_worker_per_gpu: 6
-    batch_size_per_gpu: 6
+    num_worker_per_gpu: 4
+    batch_size_per_gpu: 8
     dataset_enlarge_ratio: 1
     prefetch_mode: cuda
     pin_memory: True
@@ -46,8 +46,8 @@ datasets:
     std: 0.5
     gt_size: 256
     scale: 4
-    upsample: True
-    upsampler: 'nearest'
+    upsample: False
+    upsampler: 'bicubic'
     io_backend:
       type: disk
 
@@ -85,30 +85,47 @@ datasets:
 
 # network structures
 network_g:
-  type: EDSR_pro
-
-  in_chans: 3
-  gt_size: 256
-  embed_dim: 192
-  depths: [4, 4, 4, 4, 4, 4, 4, 4, 4, 4]
-  num_heads: [6, 6, 6, 6, 6, 6, 6, 6, 6, 6]
-  window_size: 16
-  convffn_kernel_size: 5
-  img_range: 1.
-  mlp_ratio: 2
-  use_checkpoint: False
-  channel_mult_emb: 4
-  cond_lq: True
-  dropout: 0.1
-  time_emb: True
-  scale: 4
-  block_type: 'swin'
+    type: EDMSRNet
+    img_resolution: 256
+    img_channels: 3
+    model_channels: 128
+    num_blocks: 16
+    use_fp16: False
+    model_type: 'SRNet'
+    embedding_type: 'positional'
+    channel_mult_noise: 1
+    channel_mult_emb: 4
+    resample_filter: [1, 1,]
+    dropout: 0.13
+    sigma_data: 0.5
+    sigma_min: 0
+    cond_lq: True
+    swin: True
+    swin_params:
+      embed_dim: 192
+      use_conv: True
+      num_heads: 6
+      window_size: 8
+      depth: 1
+      patch_size: 1
+      mlp_ratio: 4
+      qkv_bias: True
+      qk_scale: ~
+      drop: 0
+      attn_drop: 0.
+      drop_path: 0.
+      use_checkpoint: False
+      patch_norm: False
+    up_list: [1, 1, 1, 1, 1]
+    down_list: [1, 2, 3, 4, 4]
+    scale: 4
 
 
 # path
 path:
   pretrain_network_g: ~
-  # pretrain_network_g: experiments/CT_bicx4_l2loss_imagenet_swin_cons_8_nearest_upsample_shift_layer_10_depth_4_sigma_2_iter_40w/models/net_g_20000.pth
+  # pretrain_network_g: experiments/CT_bicx4_l2loss_swin_multi_step_5_shift_layer_8_depth_6_sigma_1_iter_40w/models/net_g_180000.pth
+  strict_load_g: true
   # resume_state: experiments/CT_bicx4_l2loss_swin_multi_step_5_shift_layer_8_depth_6_sigma_1_iter_40w/training_states/180000.state
   resume_state: ~
 
@@ -123,10 +140,10 @@ train:
 
   scheduler:
     type: MultiStepLR
-    milestones: [400000]
+    milestones: [200000]
     gamma: 0.5
 
-  total_iter: 600000
+  total_iter: 300000
   warmup_iter: 10000
 
   # losses
@@ -137,20 +154,19 @@ train:
   consistency_opt:
     type: LPIPSLoss
     sigma_min: 0
-    sigma_max: 2
-    rho: 1
-    s0: 8
-    s1: 2
-    constant_steps: 0
-    multi_step: false
+    sigma_max: 0.5
+    rho: 0.5
+    s0: 4
+    s1: 4
     p_mean: 0
     p_std: 0
-    skip: true
+
 
 # validation settings
 val:
-  val_freq: 2000
+  val_freq: 5000
   save_img: True
+
 
   metrics:
     psnr: # metric name, can be arbitrary
@@ -172,7 +188,7 @@ logger:
   print_freq: 100
   tb_freq: 1000
   save_checkpoint_freq: !!float 1e4
-  use_tb_logger: false
+  use_tb_logger: true
   wandb:
     project: ~
     resume_id: ~

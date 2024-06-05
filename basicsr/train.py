@@ -1,5 +1,5 @@
+
 import os
-# os.environ["CUDA_VISIBLE_DEVICES"] = "8"
 
 import datetime
 import logging
@@ -8,7 +8,7 @@ import time
 from os import path as osp
 import sys
 import torch
-torch.set_num_threads(10)
+# torch.set_num_threads(8)
 import lpips
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

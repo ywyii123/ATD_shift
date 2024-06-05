@@ -13,4 +13,6 @@ tb-nightly
 torch==2.0.1
 torchvision
 tqdm
+timm
+einops
 yapf
